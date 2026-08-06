@@ -1,0 +1,37 @@
+vft: "1.0"
+id: vf.web.headers.missing
+name: Missing Security Headers
+severity: Low
+confidence: Medium
+category: Headers
+metadata:
+  owasp: ASVS-14.4
+  cwe: CWE-693
+  references:
+    - https://owasp.org/www-project-secure-headers/
+variables:
+  target: "{{target}}"
+requests:
+  - id: check_headers
+    method: GET
+    path: "/"
+    headers:
+      User-Agent: "VulnForge/0.1.0"
+    matchers:
+      logic: OR
+      rules:
+        - type: header_absent
+          key: "X-Frame-Options"
+        - type: header_absent
+          key: "Content-Security-Policy"
+extractors: []
+classification:
+  kind: Possible
+  rationale: Safe header detection
+remediation:
+  guidance: |
+    Add security headers to all responses:
+    - X-Frame-Options: DENY
+    - Content-Security-Policy: default-src 'self'
+  references:
+    - https://developer.mozilla.org/en-US/docs/Web/HTTP/Headers

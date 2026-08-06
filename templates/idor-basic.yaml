@@ -1,0 +1,14 @@
+id: VF-IDOR-001
+name: Potential IDOR Pattern
+description: Checks sequential numeric ID responses for pattern (educational PoC).
+severity: low
+category: access-control
+method: GET
+path: "/?item=1"
+headers: {}
+payload:
+matchers:
+  - type: pattern_hint
+    value: "sequential_id_check"
+extractors: []
+recommendation: Enforce authorization checks on object access; avoid predictable IDs.

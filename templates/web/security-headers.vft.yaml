@@ -1,0 +1,34 @@
+vft: "1.0"
+id: vf.web.security_headers.missing
+name: Missing Security Headers
+severity: Low
+confidence: Medium
+category: Headers
+metadata:
+  owasp: ASVS-14.4
+  cwe: CWE-693
+  references:
+    - https://owasp.org/www-project-secure-headers/
+variables:
+  target: "{{target}}"
+requests:
+  - id: check_headers
+    method: GET
+    path: "/"
+    headers:
+      Accept: "*/*"
+    matchers:
+      logic: OR
+      rules:
+        - type: header_absent
+          key: "Content-Security-Policy"
+        - type: header_absent
+          key: "X-Frame-Options"
+extractors: []
+classification:
+  kind: Possible
+  rationale: Safe header check
+remediation:
+  guidance: Add recommended security headers
+  references:
+    - https://developer.mozilla.org/

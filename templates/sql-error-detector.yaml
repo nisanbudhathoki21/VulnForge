@@ -1,0 +1,14 @@
+id: VF-SQL-ERR-001
+name: Potential SQL Injection (Error-based)
+description: Sends benign payload and looks for common SQL error messages.
+severity: medium
+category: injection
+method: GET
+path: "/?id=1'"
+headers: {}
+payload:
+matchers:
+  - type: body_regex
+    value: "(?i)(SQL syntax|mysql_fetch|PostgreSQL error|SQLite error|ODBC error)"
+extractors: []
+recommendation: Use parameterized queries and avoid echoing DB errors to clients.

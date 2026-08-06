@@ -1,0 +1,17 @@
+id: VF-CORS-001
+name: CORS Misconfiguration
+description: "Detects Access-Control-Allow-Origin: *"
+severity: medium
+category: misconfiguration
+method: GET
+path: /
+headers: {}
+payload:
+matchers:
+  - type: header_contains
+    value: "Access-Control-Allow-Origin: *"
+extractors:
+  - type: header
+    name: aca_origin
+    value: Access-Control-Allow-Origin
+recommendation: "Restrict ACAO to trusted origins or use Vary: Origin with proper checks."

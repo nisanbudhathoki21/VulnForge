@@ -1,0 +1,18 @@
+id: VF-SEC-HDR-001
+name: Missing Security Headers
+description: Checks presence of common security headers.
+severity: medium
+category: misconfiguration
+method: GET
+path: /
+headers: {}
+payload:
+matchers:
+  - type: missing_headers
+    value:
+      - Content-Security-Policy
+      - X-Frame-Options
+      - X-Content-Type-Options
+      - Strict-Transport-Security
+extractors: []
+recommendation: Add the listed security headers with appropriate policies.

@@ -1,0 +1,22 @@
+Metadata-Version: 2.4
+Name: vulnforge
+Version: 0.1.0
+Summary: VulnForge: Next-generation AI-assisted Security Research Platform
+Author: VulnForge Team
+Classifier: Development Status :: 3 - Alpha
+Classifier: Intended Audience :: Information Technology
+Classifier: Topic :: Security
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Classifier: Programming Language :: Python :: 3.12
+Classifier: Programming Language :: Python :: 3.13
+Requires-Python: >=3.10
+Requires-Dist: httpx>=0.24.1
+Requires-Dist: pyyaml>=6.0.2
+Requires-Dist: lxml>=4.9.3
+Dynamic: author
+Dynamic: classifier
+Dynamic: requires-dist
+Dynamic: requires-python
+Dynamic: summary

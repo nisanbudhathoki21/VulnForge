@@ -1,0 +1,22 @@
+id: VF-SRV-INFO-001
+name: Server Information Disclosure
+description: Detects Server/X-Powered-By headers.
+severity: low
+category: information-disclosure
+method: GET
+path: /
+headers: {}
+payload:
+matchers:
+  - type: header_exists
+    value: "Server"
+  - type: header_exists
+    value: "X-Powered-By"
+extractors:
+  - type: header
+    name: server_header
+    value: Server
+  - type: header
+    name: x_powered_by
+    value: X-Powered-By
+recommendation: Remove or minimize informational headers in production.
