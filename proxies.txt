@@ -1,0 +1,5 @@
+http://user:pass@proxy1:8080 US
+http://proxy2:8080 UK
+socks5://proxy3:1080 DE
+http://proxy4:3128 FR
+http://proxy5:80 US

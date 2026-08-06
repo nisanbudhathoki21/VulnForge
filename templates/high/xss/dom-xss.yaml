@@ -1,0 +1,82 @@
+id: vf-high-dom-xss-01
+
+name: Advanced DOM XSS Detection
+
+severity: High
+
+category: XSS
+
+requests:
+
+  - id: dom-location-hash
+    method: GET
+    path: "/#<script>alert(1)</script>"
+    matchers:
+      type: word
+      words:
+        - "location.hash"
+        - "document.write"
+        - "innerHTML"
+        - "outerHTML"
+        - "insertAdjacentHTML"
+
+  - id: dom-query
+    method: GET
+    path: "/?q=<svg/onload=alert(1)>"
+    matchers:
+      type: word
+      words:
+        - "location.search"
+        - "decodeURIComponent"
+        - "innerHTML"
+
+  - id: dom-name
+    method: GET
+    path: "/?name=<img src=x onerror=alert(1)>"
+    matchers:
+      type: word
+      words:
+        - "innerHTML"
+        - "document.write"
+
+  - id: dom-message
+    method: GET
+    path: "/?message=<iframe src=javascript:alert(1)>"
+    matchers:
+      type: word
+      words:
+        - "eval("
+        - "setTimeout("
+        - "setInterval("
+        - "Function("
+
+  - id: dom-redirect
+    method: GET
+    path: "/?redirect=javascript:alert(1)"
+    matchers:
+      type: word
+      words:
+        - "location.href"
+        - "location.assign"
+        - "location.replace"
+
+metadata:
+
+  sources:
+    - location.hash
+    - location.search
+    - location.href
+    - document.URL
+    - document.location
+    - window.name
+    - postMessage
+
+  sinks:
+    - innerHTML
+    - outerHTML
+    - document.write
+    - eval
+    - Function
+    - setTimeout
+    - setInterval
+    - insertAdjacentHTML

