@@ -1,3 +1,7 @@
+## Screenshot
+
+![VulnForge scan output](docs/screenshots/scan-output.png)
+
 # VulnForge
 
 VulnForge is a lightweight, template-driven security research CLI for safe, non-destructive vulnerability discovery, correlation, and reporting.
