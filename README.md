@@ -61,6 +61,10 @@ Reports are written to `output/`.
 
 ## Architecture
 
+<p align="center">
+  <img src="docs/diagrams/vulnforge-architecture.png" alt="VulnForge Architecture" width="1000">
+</p>
+
 correlation/ Correlation engine — links findings into investigation paths
 database/ SQLAlchemy models + repository for scan persistence
 httpclient/ Async HTTP client (httpx-based)
