@@ -1,6 +1,6 @@
 ## Screenshot
 
-![VulnForge scan output](docs/screenshots/scan-output.png)
+![VulnForge banner](docs/screenshots/banner.png)
 
 # VulnForge
 
