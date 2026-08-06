@@ -1,6 +1,6 @@
-## Screenshot
+## Screenshots
 
-![VulnForge banner](docs/screenshots/banner.png)
+<img src="docs/Banner/banner.png" alt="VulnForge Banner" width="900">
 
 # VulnForge
 
