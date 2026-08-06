@@ -1,21 +1,32 @@
-from __future__ import annotations
-from typing import List, Dict, Any
 import json
-from workspace.models import Finding
-from risk.engine import score
-def to_json(workspace_id: str, findings: List[Finding]) -> str:
-    data: List[Dict[str, Any]] = []
+
+def to_json(workspace_id, findings):
+    """Package level function for JSON export."""
+    data = []
     for f in findings:
-        s = score(f)
         data.append({
-            "id": f.id,
             "title": f.title,
             "severity": f.severity,
-            "kind": f.kind,
-            "confidence": f.confidence,
-            "context": f.context,
-            "priority": s["priority"],
-            "band": s["band"],
-            "references": f.references
+            "url": f.context.get("url"),
+            "evidence": f.context.get("evidence")
         })
-    return json.dumps({"workspace": workspace_id, "findings": data}, indent=2)
+    return json.dumps({"workspace": workspace_id, "findings": data}, indent=4)
+
+class JsonReporter:
+    @staticmethod
+    def generate(url, findings):
+        """CLI level method for JSON export."""
+        report = {
+            "target": url,
+            "total_findings": len(findings),
+            "findings": []
+        }
+        for f in findings:
+            report["findings"].append({
+                "title": f.title,
+                "severity": f.severity,
+                "url": f.context.get("url"),
+                "evidence": f.context.get("evidence"),
+                "poc": f"curl -is -X GET '{f.context.get('url')}'"
+            })
+        return json.dumps(report, indent=4)

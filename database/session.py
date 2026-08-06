@@ -1,14 +1,10 @@
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-from config.settings import Settings
-from database.models import Base
+from .models import Base
 
-def get_engine():
-    db_url = f"sqlite:///{Settings().DB_PATH}"
-    return create_engine(db_url, echo=False, future=True)
+# Using SQLite for local research persistence
+engine = create_engine('sqlite:///vulnforge.db', connect_args={"check_same_thread": False})
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-Engine = get_engine()
-SessionLocal = sessionmaker(bind=Engine, autoflush=False, autocommit=False, future=True)
-
-def init_db() -> None:
-    Base.metadata.create_all(bind=Engine)
+def init_db():
+    Base.metadata.create_all(bind=engine)

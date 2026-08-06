@@ -1,2 +1,1 @@
-from .engine import Correlated
-__all__ = ["Correlated"]
+from .engine import CorrelationEngine

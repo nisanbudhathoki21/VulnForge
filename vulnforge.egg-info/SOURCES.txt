@@ -31,6 +31,7 @@ templates/loader.py
 templates/schema.py
 terminal/__init__.py
 terminal/cli.py
+terminal/ui.py
 tests/__init__.py
 utils/__init__.py
 utils/cli.py

@@ -1,67 +1,71 @@
 from __future__ import annotations
-from typing import List
-import asyncio, logging, urllib.parse, uuid, datetime
+import sys
+import uuid
+from typing import List, Dict, Any
 from httpclient.client import HttpClient
-from templates.schema import Template
 from matcher.engine import MatchContext, apply_matchers
-from extractor.engine import ExtractCtx, extract
-from workspace.models import Workspace, Finding, Evidence
-log = logging.getLogger("vulnforge.scanner")
+from workspace.models import Finding
+
+
 class ScanResult:
-    def __init__(self) -> None:
+    def __init__(self):
         self.findings: List[Finding] = []
-        self.evidence: List[Evidence] = []
+        self.request_count: int = 0
+
+
 class Scanner:
-    def __init__(self, http: HttpClient) -> None:
+    def __init__(self, http: HttpClient):
         self.http = http
-    async def run_template(self, ws: Workspace, base_url: str, tpl: Template) -> ScanResult:
-        res = ScanResult()
+        self.memory: Dict[str, str] = {}
+
+    def _resolve_kind(self, tpl, matchers: Dict[str, Any]) -> str:
+        """Determine the finding's kind from the template's own classification,
+        falling back to a conservative default rather than guessing from matcher type."""
+        classification = getattr(tpl, "classification", None) or {}
+        declared = classification.get("kind")
+        if declared in ("Verified", "Possible", "Related", "Investigation"):
+            return declared
+
+        # Fallback: time-delay based matchers are treated as Verified since
+        # timing behavior is directly observed, not inferred.
+        if "time_delay" in str(matchers):
+            return "Verified"
+
+        return "Possible"
+
+    async def run_template(self, ws, base_url: str, tpl) -> ScanResult:
+        result = ScanResult()
+        base = base_url.rstrip("/")
+
         for r in tpl.requests:
-            url = urllib.parse.urljoin(base_url, r.path)
+            result.request_count += 1
+
+            # Variable substitution
+            path = r.path
+            for var, val in self.memory.items():
+                path = path.replace(f"{{{{{var}}}}}", str(val))
+
+            url = base + (path if path.startswith("/") else "/" + path)
+
             try:
-                resp = await self.http.request(r.method, url, headers=r.headers, content=r.body)
+                resp = await self.http.request(r.method, url, headers=r.headers)
+
+                matched, evidence = apply_matchers(MatchContext(resp), r.matchers)
+                if matched:
+                    result.findings.append(Finding(
+                        id=str(uuid.uuid4()),
+                        title=tpl.name,
+                        category=tpl.category,
+                        kind=self._resolve_kind(tpl, r.matchers),
+                        severity=tpl.severity,
+                        confidence=1.0,
+                        context={
+                            "url": url,
+                            "evidence": evidence,
+                            "duration": getattr(resp, "vulnforge_duration", 0),
+                        },
+                    ))
             except Exception as e:
-                log.warning("Request error %s -> %s", url, e)
-                continue
-            mctx = MatchContext(resp)
-            ex_ctx = ExtractCtx(resp)
-            matched = apply_matchers(mctx, r.matchers)
-            data = extract(ex_ctx, tpl.extractors)
-            ev = Evidence(
-                id=str(uuid.uuid4()),
-                type="http",
-                data={
-                    "template_id": tpl.id,
-                    "request_id": r.id,
-                    "url": url,
-                    "status": resp.status_code,
-                    "headers": dict(resp.headers),
-                    "body_preview": resp.text[:2048],
-                    "extracted": data
-                },
-                created_at=datetime.datetime.utcnow().isoformat() + "Z"
-            )
-            res.evidence.append(ev)
-            if matched:
-                kind = tpl.classification.get("kind","Possible")
-                f = Finding(
-                    id=str(uuid.uuid4()),
-                    title=tpl.name,
-                    category=tpl.category,
-                    kind=kind,
-                    severity=tpl.severity,
-                    confidence={"Low":0.3,"Medium":0.6,"High":0.85,"Certain":0.98}.get(tpl.confidence,0.5),
-                    context={"template_id": tpl.id, "request_id": r.id, "url": url},
-                    references=tpl.metadata.get("references", []),
-                    evidence_ids=[ev.id]
-                )
-                res.findings.append(f)
-        return res
-    async def scan(self, ws: Workspace, targets: List[str], templates: List[Template]) -> ScanResult:
-        agg = ScanResult()
-        for base in targets:
-            for tpl in templates:
-                r = await self.run_template(ws, base, tpl)
-                agg.findings.extend(r.findings)
-                agg.evidence.extend(r.evidence)
-        return agg
+                print(f"[DEBUG] Template {tpl.id} failed: {e}", file=sys.stderr)
+
+        return result

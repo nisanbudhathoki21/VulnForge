@@ -1,0 +1,20 @@
+{
+    "target": "https://shreeramsharnam.org/",
+    "total_findings": 2,
+    "findings": [
+        {
+            "title": "Missing Security Headers",
+            "severity": "Medium",
+            "url": "https://shreeramsharnam.org/",
+            "evidence": "Missing: x-frame-options",
+            "poc": "curl -is -X GET 'https://shreeramsharnam.org/'"
+        },
+        {
+            "title": "Insecure Direct Object Reference",
+            "severity": "High",
+            "url": "https://shreeramsharnam.org/api/user/1001",
+            "evidence": "Matched: email|username|",
+            "poc": "curl -is -X GET 'https://shreeramsharnam.org/api/user/1001'"
+        }
+    ]
+}

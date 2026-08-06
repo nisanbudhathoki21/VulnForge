@@ -1,0 +1,12 @@
+id: vf-crit-sql-01
+name: SQL Syntax Error Disclosure
+severity: Critical
+category: Injection
+requests:
+  - method: GET
+    path: "/listproducts.php?cat=1'"
+    matchers:
+      logic: OR
+      rules:
+        - type: regex
+          pattern: "SQL syntax.*MySQL|mysql_fetch_array|PostgreSQL.*ERROR"

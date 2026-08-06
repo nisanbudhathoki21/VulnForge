@@ -1,0 +1,14 @@
+id: idor-bola-check
+name: Insecure Direct Object Reference
+severity: High
+category: Broken Access Control
+requests:
+  - method: GET
+    path: "/api/user/1001"
+    matchers:
+      logic: AND
+      rules:
+        - type: status
+          code: 200
+        - type: regex
+          pattern: "email|username|address"
