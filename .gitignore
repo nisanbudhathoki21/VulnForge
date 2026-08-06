@@ -1,0 +1,7 @@
+.venv/
+__pycache__/
+*.pyc
+vulnforge.db
+output/
+.env
+*.egg-info/
