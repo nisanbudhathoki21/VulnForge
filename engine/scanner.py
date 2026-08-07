@@ -1,12 +1,6 @@
 #!/usr/bin/env python3
 """
-engine/scanner.py – God‑Level Scanner Engine
-- Auto‑scheme normalization
-- Smart discovery (skip when -T is a file)
-- Authentication skip (--no-auth)
-- Privilege escalation skip (--no-priv)
-- Timeout control (--timeout)
-- Proxy rotation, WAF bypass, exploitation, full capture
+engine/scanner.py – Full God‑Level Scanner (handles missing deps gracefully)
 """
 
 import os
@@ -19,11 +13,11 @@ import traceback
 import zlib
 import random
 import string
-import base64
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+# Optional imports with fallback
 try:
     import brotli
 except ImportError:
@@ -35,9 +29,6 @@ except ImportError:
     jsonpath_ng = None
 
 
-# ==================================================================
-# WAF BYPASS & PROXY ROTATION
-# ==================================================================
 class WAFBypass:
     def __init__(self, proxy_file=None, user_agent_list=None):
         self.proxies = []
@@ -46,13 +37,9 @@ class WAFBypass:
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/119.0',
-            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10.15; rv:109.0) Gecko/20100101 Firefox/119.0',
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36 Edg/119.0.0.0',
             'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1',
         ]
         self.current_index = 0
-        self.country_map = {}
-
         if proxy_file and os.path.isfile(proxy_file):
             with open(proxy_file, 'r') as f:
                 for line in f:
@@ -63,7 +50,6 @@ class WAFBypass:
                     proxy_url = parts[0]
                     country = parts[1] if len(parts) > 1 else 'XX'
                     self.proxies.append((proxy_url, country))
-                    self.country_map[proxy_url] = country
 
     def get_proxy(self, preferred_country=None):
         if not self.proxies:
@@ -71,8 +57,8 @@ class WAFBypass:
         if preferred_country:
             country_proxies = [p for p in self.proxies if p[1].upper() == preferred_country.upper()]
             if country_proxies:
-                proxy_url = random.choice(country_proxies)[0]
-                return {'http': proxy_url, 'https': proxy_url}
+                proxy = random.choice(country_proxies)
+                return {'http': proxy[0], 'https': proxy[0]}
         self.current_index = (self.current_index + 1) % len(self.proxies)
         proxy_url = self.proxies[self.current_index][0]
         return {'http': proxy_url, 'https': proxy_url}
@@ -80,21 +66,15 @@ class WAFBypass:
     def get_headers(self):
         fake_ip = f"{random.randint(1,255)}.{random.randint(0,255)}.{random.randint(0,255)}.{random.randint(1,255)}"
         return {
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
             'Accept-Language': random.choice(['en-US,en;q=0.9', 'en-GB,en;q=0.8', 'fr-FR,fr;q=0.9']),
             'Accept-Encoding': 'gzip, deflate, br',
             'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-            'Cache-Control': random.choice(['max-age=0', 'no-cache']),
-            'DNT': '1',
             'X-Forwarded-For': fake_ip,
             'X-Real-IP': fake_ip,
             'X-Originating-IP': fake_ip,
             'CF-Connecting-IP': fake_ip,
             'True-Client-IP': fake_ip,
-            'X-Client-IP': fake_ip,
-            'X-Remote-IP': fake_ip,
-            'X-Remote-Addr': fake_ip,
         }
 
     def get_user_agent(self):
@@ -104,9 +84,6 @@ class WAFBypass:
         return base_delay + random.uniform(0, jitter)
 
 
-# ==================================================================
-# AUTH MANAGER
-# ==================================================================
 class AuthManager:
     def __init__(self, session, base_url, quiet=False):
         self.session = session
@@ -127,8 +104,8 @@ class AuthManager:
             self.domain = self.domain[4:]
 
     def generate_email(self, prefix='scanner'):
-        random_str = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
-        return f"{prefix}_{random_str}@{self.domain}"
+        rand = ''.join(random.choices(string.ascii_lowercase + string.digits, k=6))
+        return f"{prefix}_{rand}@{self.domain}"
 
     def generate_password(self, base='VulnForge2024!'):
         domain_part = self.domain.split('.')[0] if '.' in self.domain else self.domain
@@ -139,10 +116,9 @@ class AuthManager:
             email = self.generate_email()
         if not password:
             password = self.generate_password()
-
         reg_endpoints = [
-            '/api/Users', '/api/users', '/register', '/signup', '/auth/register',
-            '/rest/register', '/json/register', '/api/registration'
+            '/api/Users', '/api/users', '/register', '/signup',
+            '/auth/register', '/rest/register', '/json/register'
         ]
         for endpoint in reg_endpoints:
             url = urljoin(self.base_url, endpoint)
@@ -152,23 +128,11 @@ class AuthManager:
                 if resp.status_code in [200, 201]:
                     self.auth_data['username'] = email
                     self.auth_data['password'] = password
-                    try:
-                        data_json = resp.json()
-                        if 'id' in data_json:
-                            self.auth_data['user_id'] = data_json['id']
-                        elif 'data' in data_json and 'id' in data_json['data']:
-                            self.auth_data['user_id'] = data_json['data']['id']
-                    except:
-                        pass
-                    if not self.quiet:
-                        print(f"[AUTH] Registered {email}")
                     return True
                 resp = self.session.post(url, data=data)
                 if resp.status_code in [200, 201, 302]:
                     self.auth_data['username'] = email
                     self.auth_data['password'] = password
-                    if not self.quiet:
-                        print(f"[AUTH] Registered {email} (form)")
                     return True
             except:
                 continue
@@ -181,10 +145,9 @@ class AuthManager:
             password = self.auth_data.get('password')
         if not username or not password:
             return False
-
         login_endpoints = [
-            '/rest/user/login', '/api/login', '/auth/login', '/login', '/signin',
-            '/api/auth/login', '/json/login', '/rest/login'
+            '/rest/user/login', '/api/login', '/auth/login',
+            '/login', '/signin', '/json/login'
         ]
         for endpoint in login_endpoints:
             url = urljoin(self.base_url, endpoint)
@@ -197,8 +160,6 @@ class AuthManager:
                             self.auth_data['jwt'] = data['token']
                             self.session.headers['Authorization'] = f'Bearer {data["token"]}'
                             self.authenticated = True
-                            if not self.quiet:
-                                print(f"[AUTH] Logged in as {username}")
                             return True
                         if 'authentication' in data and 'token' in data['authentication']:
                             self.auth_data['jwt'] = data['authentication']['token']
@@ -211,8 +172,6 @@ class AuthManager:
                 if resp.status_code in [200, 302]:
                     if self.session.cookies.get_dict():
                         self.authenticated = True
-                        if not self.quiet:
-                            print(f"[AUTH] Logged in (cookie) as {username}")
                         return True
             except:
                 continue
@@ -229,341 +188,6 @@ class AuthManager:
         return False
 
 
-# ==================================================================
-# ENDPOINT DISCOVERY (only when -T is a directory)
-# ==================================================================
-class EndpointDiscovery:
-    def __init__(self, session, base_url, quiet=False):
-        self.session = session
-        self.base_url = base_url
-        self.quiet = quiet
-        self.results = []
-
-    def get_wordlist(self):
-        # 300+ common paths – full list
-        return [
-            '/api', '/api/v1', '/api/v2', '/api/v3',
-            '/api/me', '/api/users', '/api/user',
-            '/api/profile', '/api/profiles',
-            '/api/accounts', '/api/account',
-            '/api/login', '/api/logout', '/api/register', '/api/signup',
-            '/api/auth', '/api/token', '/api/refresh',
-            '/api/orders', '/api/order',
-            '/api/cart', '/api/basket',
-            '/api/products', '/api/product',
-            '/api/items', '/api/item',
-            '/api/payments', '/api/payment',
-            '/api/invoices', '/api/invoice',
-            '/api/receipts', '/api/receipt',
-            '/api/shipping', '/api/tracking',
-            '/api/notifications', '/api/messages', '/api/chat',
-            '/api/comments', '/api/comment',
-            '/api/reviews', '/api/review',
-            '/api/ratings', '/api/rating',
-            '/api/likes', '/api/like',
-            '/api/favorites', '/api/favorite',
-            '/api/bookmarks', '/api/bookmark',
-            '/api/subscriptions', '/api/subscription',
-            '/api/plans', '/api/plan',
-            '/api/billing', '/api/balance', '/api/wallet',
-            '/api/transactions', '/api/transaction',
-            '/api/history', '/api/activity',
-            '/api/audit', '/api/logs',
-            '/api/statistics', '/api/stats',
-            '/api/reports', '/api/report',
-            '/api/analytics', '/api/dashboard',
-            '/api/admin', '/api/administrator',
-            '/api/settings', '/api/config', '/api/configuration',
-            '/api/preferences',
-            '/api/profile-picture', '/api/avatar',
-            '/api/upload', '/api/file', '/api/files',
-            '/api/media', '/api/document', '/api/documents',
-            '/api/download', '/api/export', '/api/import',
-            '/api/backup', '/api/restore',
-            '/api/status', '/api/health', '/api/ping',
-            '/api/info', '/api/version', '/api/metadata',
-            '/api/feed', '/api/news',
-            '/api/blogs', '/api/blog',
-            '/api/posts', '/api/post',
-            '/api/pages', '/api/page',
-            '/api/search', '/api/explore', '/api/discover',
-            '/api/trending', '/api/popular',
-            '/api/recommendations', '/api/suggestions',
-            '/api/friends', '/api/friend',
-            '/api/followers', '/api/following',
-            '/api/follow', '/api/unfollow',
-            '/api/block', '/api/unblock',
-            '/api/mute', '/api/unmute',
-            '/api/report', '/api/flag', '/api/spam',
-            '/api/verify', '/api/verification',
-            '/api/reset-password', '/api/forgot-password',
-            '/api/change-password', '/api/update-password',
-            '/api/email', '/api/phone', '/api/sms',
-            '/api/address', '/api/addresses',
-            '/api/location', '/api/geo',
-            '/api/coordinates', '/api/zipcode',
-            '/api/timezone', '/api/language', '/api/currency',
-            '/api/country', '/api/countries',
-            '/api/state', '/api/city', '/api/region',
-            '/rest', '/rest/v1', '/rest/v2',
-            '/rest/users', '/rest/user',
-            '/rest/orders', '/rest/order',
-            '/rest/products', '/rest/product',
-            '/rest/cart', '/rest/basket',
-            '/rest/profile', '/rest/accounts',
-            '/rest/auth', '/rest/login', '/rest/logout',
-            '/rest/register', '/rest/token',
-            '/rest/me', '/rest/settings',
-            '/rest/change-password', '/rest/reset-password',
-            '/rest/upload', '/rest/file',
-            '/json', '/json/v1', '/json/v2',
-            '/json/users', '/json/user',
-            '/json/orders', '/json/order',
-            '/json/products', '/json/product',
-            '/json/profile', '/json/auth',
-            '/json/login', '/json/logout',
-            '/json/register', '/json/token',
-            '/graphql', '/graphql/query', '/graphql/v1',
-            '/gql', '/gql/query',
-            '/graphiql', '/playground',
-            '/services', '/soap', '/xmlrpc', '/xmlrpc.php',
-            '/webdav',
-            '/oauth', '/oauth/authorize', '/oauth/token',
-            '/oauth/revoke', '/oauth/callback',
-            '/.well-known/openid-configuration',
-            '/.well-known/oauth-authorization-server',
-            '/webfinger', '/host-meta', '/nodeinfo',
-            '/.well-known/nodeinfo', '/.well-known/webfinger',
-            '/wp-json', '/wp-json/wp/v2',
-            '/wp-json/wp/v2/users', '/wp-json/wp/v2/posts',
-            '/wp-json/wp/v2/pages', '/wp-json/wp/v2/comments',
-            '/wp-json/wp/v2/categories', '/wp-json/wp/v2/tags',
-            '/wp-json/wp/v2/media', '/wp-json/wp/v2/statuses',
-            '/wp-json/wp/v2/types', '/wp-json/wp/v2/settings',
-            '/wp-json/wp/v2/themes', '/wp-json/wp/v2/blocks',
-            '/wp-json/wp/v2/plugins',
-            '/index.php?option=com_api',
-            '/index.php?option=com_ajax',
-            '/jsonapi', '/jsonapi/node', '/jsonapi/user',
-            '/jsonapi/paragraph', '/jsonapi/entity', '/jsonapi/views',
-            '/rest/V1', '/rest/V1/customers', '/rest/V1/products',
-            '/rest/V1/orders', '/rest/V1/carts', '/rest/V1/categories',
-            '/rest/V1/attributes', '/rest/V1/tax-rates',
-            '/rest/V1/inventory', '/rest/V1/shipments',
-            '/rest/V1/invoices', '/rest/V1/creditmemos',
-            '/rest/V1/returns', '/rest/V1/guest-carts',
-            '/rest/V1/guest-carts/items', '/rest/V1/guest-carts/order',
-            '/rest/V1/guest-carts/payment-information',
-            '/rest/V1/guest-carts/shipping-information',
-            '/rest/V1/guest-carts/totals',
-            '/rest/V1/guest-carts/estimate-shipping-methods',
-            '/rest/V1/guest-carts/estimate-payment-methods',
-            '/api/v1/user', '/api/v1/profile', '/api/v1/orders',
-            '/api/v1/order', '/api/v1/products', '/api/v1/product',
-            '/api/v1/cart', '/api/v1/basket', '/api/v1/auth',
-            '/api/v1/login', '/api/v1/logout', '/api/v1/register',
-            '/api/v1/token', '/api/v1/refresh', '/api/v1/me',
-            '/api/v1/users', '/api/v1/accounts', '/api/v1/settings',
-            '/api/v1/admin', '/api/v1/status', '/api/v1/health',
-            '/api/v1/ping', '/api/v1/info', '/api/v1/version',
-            '/api/v1/metadata', '/api/v1/search', '/api/v1/upload',
-            '/api/v1/file', '/api/v1/files', '/api/v1/media',
-            '/api/v1/document', '/api/v1/documents', '/api/v1/export',
-            '/api/v1/import', '/api/v1/backup', '/api/v1/restore',
-            '/api/v1/statistics', '/api/v1/stats', '/api/v1/reports',
-            '/api/v1/report', '/api/v1/analytics', '/api/v1/dashboard',
-            '/api/v1/feed', '/api/v1/news', '/api/v1/blogs',
-            '/api/v1/blog', '/api/v1/posts', '/api/v1/post',
-            '/api/v1/pages', '/api/v1/page',
-            '/api/v1/change-password', '/api/v1/reset-password',
-            '/api/v1/forgot-password', '/api/v1/verify',
-            '/api/v2/users', '/api/v2/user', '/api/v2/profile',
-            '/api/v2/orders', '/api/v2/order', '/api/v2/products',
-            '/api/v2/product', '/api/v2/cart', '/api/v2/basket',
-            '/api/v2/auth', '/api/v2/login', '/api/v2/logout',
-            '/api/v2/register', '/api/v2/token', '/api/v2/refresh',
-            '/api/v2/me', '/api/v2/admin', '/api/v2/status',
-            '/api/v2/health', '/api/v2/settings',
-            '/api/v3/users', '/api/v3/user', '/api/v3/profile',
-            '/api/v3/orders', '/api/v3/order', '/api/v3/products',
-            '/api/v3/product', '/api/v3/cart', '/api/v3/basket',
-            '/actuator', '/actuator/health', '/actuator/info',
-            '/actuator/metrics', '/actuator/env', '/actuator/configprops',
-            '/actuator/mappings', '/actuator/beans', '/actuator/auditevents',
-            '/actuator/conditions', '/actuator/heapdump', '/actuator/threaddump',
-            '/actuator/prometheus', '/actuator/loggers', '/actuator/scheduledtasks',
-            '/actuator/sessions',
-            '/swagger', '/swagger.json', '/swagger.yaml',
-            '/swagger-ui', '/swagger-ui.html',
-            '/api-docs', '/api-docs.json', '/docs',
-            '/v2/api-docs', '/v3/api-docs',
-            '/openapi', '/openapi.json', '/openapi.yaml',
-            '/spec', '/spec.json', '/rapidoc', '/redoc',
-            '/graphql?query=query%20%7B%20__schema%20%7B%20types%20%7B%20name%20%7D%20%7D%20%7D',
-            '/graphql/?query=query%20%7B%20__schema%20%7B%20types%20%7B%20name%20%7D%20%7D%20%7D',
-            '/graphiql?query=query%20%7B%20__schema%20%7B%20types%20%7B%20name%20%7D%20%7D%20%7D',
-            '/playground?query=query%20%7B%20__schema%20%7B%20types%20%7B%20name%20%7D%20%7D%20%7D',
-            '/password-reset', '/forgot-password', '/reset-password',
-            '/change-password', '/update-password',
-            '/api/password-reset', '/api/forgot-password',
-            '/api/reset-password', '/api/change-password',
-            '/api/update-password', '/rest/password-reset',
-            '/json/password-reset', '/auth/password-reset',
-            '/sms', '/sms/verify', '/sms/send',
-            '/phone', '/phone/verify', '/phone/send',
-            '/api/sms', '/api/phone', '/api/verify-phone',
-            '/api/send-sms', '/api/otp', '/api/verify-otp',
-            '/email', '/email/verify', '/email/send',
-            '/api/email', '/api/verify-email', '/api/send-email',
-            '/api/resend-verification',
-            '/settings', '/preferences', '/notifications',
-            '/api/settings', '/api/preferences', '/api/notifications',
-            '/rest/settings', '/json/settings',
-        ]
-
-    def test_path(self, path):
-        url = urljoin(self.base_url, path)
-        try:
-            resp = self.session.get(url, timeout=5, allow_redirects=False)
-            if resp.status_code in [200, 201, 202, 203, 204, 205, 206, 301, 302, 303, 304, 307, 308,
-                                    400, 401, 403, 404, 405, 406, 409, 410, 411, 412, 413, 414, 415,
-                                    416, 417, 418, 421, 422, 423, 424, 425, 426, 428, 429, 431, 451,
-                                    500, 501, 502, 503, 504, 505, 506, 507, 508, 510, 511]:
-                return {'path': path, 'status': resp.status_code, 'method': 'GET', 'url': url}
-        except:
-            pass
-        return None
-
-    def discover(self):
-        paths = self.get_wordlist()
-        discovered = []
-        if not self.quiet:
-            print(f"[DISCOVERY] Testing {len(paths)} common API paths...")
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            futures = {executor.submit(self.test_path, path): path for path in paths}
-            for future in as_completed(futures):
-                result = future.result()
-                if result:
-                    discovered.append(result)
-                    if not self.quiet:
-                        print(f"[DISCOVERY] {result['method']} {result['url']} - {result['status']}")
-        self.results = discovered
-        return discovered
-
-    def get_valid_endpoints(self, statuses=None):
-        if statuses is None:
-            statuses = [200, 201, 202, 203, 204, 205, 206, 301, 302, 303, 304, 307, 308, 401, 403]
-        return [r for r in self.results if r['status'] in statuses]
-
-
-# ==================================================================
-# PRIVILEGE ESCALATION
-# ==================================================================
-class PrivilegeEscalation:
-    def __init__(self, session, base_url, quiet=False):
-        self.session = session
-        self.base_url = base_url
-        self.quiet = quiet
-
-    def detect_admin_endpoints(self):
-        admin_paths = [
-            '/api/admin', '/admin', '/administrator',
-            '/api/v1/admin', '/api/v2/admin',
-            '/actuator', '/actuator/env',
-            '/swagger', '/api-docs'
-        ]
-        found = []
-        for path in admin_paths:
-            url = urljoin(self.base_url, path)
-            try:
-                resp = self.session.get(url, timeout=5)
-                if resp.status_code in [200, 401, 403]:
-                    found.append({'path': path, 'status': resp.status_code, 'url': url})
-            except:
-                pass
-        return found
-
-    def test_mass_assignment_admin(self, target_endpoint='/api/Users'):
-        url = urljoin(self.base_url, target_endpoint)
-        random_email = f"test_{random.randint(1000,9999)}@test.com"
-        payload = {'email': random_email, 'password': 'test123', 'passwordRepeat': 'test123'}
-        admin_payload = payload.copy()
-        admin_payload['role'] = 'admin'
-        try:
-            resp = self.session.post(url, json=admin_payload)
-            if resp.status_code in [200, 201]:
-                return {
-                    'success': True,
-                    'endpoint': url,
-                    'email': random_email,
-                    'response': resp.text[:200]
-                }
-        except:
-            pass
-        return None
-
-    def test_jwt_privilege_escalation(self, jwt_token):
-        if not jwt_token:
-            return None
-        parts = jwt_token.split('.')
-        if len(parts) != 3:
-            return None
-        try:
-            header = json.loads(base64.b64decode(parts[0] + '=='))
-            payload = json.loads(base64.b64decode(parts[1] + '=='))
-        except:
-            return None
-        payload['role'] = 'admin'
-        payload['is_admin'] = True
-        payload['admin'] = True
-        header['alg'] = 'none'
-        new_header = base64.b64encode(json.dumps(header).encode()).decode().rstrip('=')
-        new_payload = base64.b64encode(json.dumps(payload).encode()).decode().rstrip('=')
-        new_token = f"{new_header}.{new_payload}."
-        test_url = urljoin(self.base_url, '/api/admin/users')
-        try:
-            resp = self.session.get(test_url, headers={'Authorization': f'Bearer {new_token}'})
-            if resp.status_code == 200:
-                return {
-                    'success': True,
-                    'endpoint': test_url,
-                    'token': new_token,
-                    'response': resp.text[:200]
-                }
-        except:
-            pass
-        return None
-
-    def run_all(self, jwt_token=None):
-        findings = []
-        admin_endpoints = self.detect_admin_endpoints()
-        if admin_endpoints:
-            findings.append({
-                'type': 'Admin Endpoint Exposure',
-                'details': admin_endpoints,
-                'severity': 'high'
-            })
-        mass_assign = self.test_mass_assignment_admin()
-        if mass_assign and mass_assign.get('success'):
-            findings.append({
-                'type': 'Mass Assignment – Admin Registration',
-                'details': mass_assign,
-                'severity': 'critical'
-            })
-        if jwt_token:
-            jwt_escalate = self.test_jwt_privilege_escalation(jwt_token)
-            if jwt_escalate and jwt_escalate.get('success'):
-                findings.append({
-                    'type': 'JWT Privilege Escalation',
-                    'details': jwt_escalate,
-                    'severity': 'critical'
-                })
-        return findings
-
-
-# ==================================================================
-# MAIN SCANNER CLASS
-# ==================================================================
 class Scanner:
     def __init__(self, url, quiet=False, template_dir='templates/',
                  max_workers=10, proxy_file=None, country=None,
@@ -571,7 +195,6 @@ class Scanner:
                  username=None, password=None, timeout=10,
                  skip_priv=False, skip_auth=False):
         self.raw_url = url.rstrip('/')
-        # Normalize URL – add scheme if missing
         if not self.raw_url.startswith(('http://', 'https://')):
             self.raw_url = 'https://' + self.raw_url
         parsed = urlparse(self.raw_url)
@@ -609,7 +232,6 @@ class Scanner:
             'captcha', 'cloudflare', 'ddos protection', 'please wait',
             'access denied', 'cf-ray', 'shutdown', 'site is down',
             'offline', 'maintenance mode', 'under maintenance',
-            'temporarily unavailable',
         ]
 
     def _get_session(self):
@@ -634,41 +256,6 @@ class Scanner:
             delay = self.waf.get_delay(self.base_delay, self.jitter)
             time.sleep(delay)
         self.last_request_time = time.time()
-
-    def _make_request(self, method, url, headers, body, stage, retries=3):
-        for attempt in range(retries + 1):
-            self.session = self._get_session()
-            try:
-                all_headers = self.session.headers.copy()
-                all_headers.update(headers)
-                if body and 'Content-Type' not in all_headers:
-                    all_headers['Content-Type'] = 'application/json'
-                timeout = stage.get('timeout', self.timeout)
-                self._throttle(retry=(attempt > 0))
-                resp = self.session.request(
-                    method, url, headers=all_headers, data=body,
-                    timeout=timeout, allow_redirects=True
-                )
-                if resp.status_code in [429, 503]:
-                    if attempt < retries:
-                        backoff = 2 ** attempt
-                        if not self.quiet:
-                            print(f"[RETRY] {resp.status_code} on {url}, retrying in {backoff}s...")
-                        time.sleep(backoff)
-                        continue
-                return resp
-            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-                if attempt < retries:
-                    backoff = 2 ** attempt
-                    if not self.quiet:
-                        print(f"[RETRY] {e}, retrying in {backoff}s...")
-                    time.sleep(backoff)
-                    continue
-                else:
-                    if not self.quiet:
-                        print(f"[ERROR] Request failed: {e}")
-                    return None
-        return None
 
     def _decode_response_body(self, response):
         content_encoding = response.headers.get('Content-Encoding', '').lower()
@@ -701,42 +288,32 @@ class Scanner:
                     data = yaml.safe_load(f)
                 if data and isinstance(data, dict) and 'id' in data:
                     if 'requests' not in data or not isinstance(data['requests'], list):
-                        if not self.quiet:
-                            print(f"[WARN] {self.template_dir}: missing 'requests' list")
                         return
                     data['_file'] = self.template_dir
                     self.templates.append(data)
                     if not self.quiet:
                         print(f"[LOADING] {self.template_dir} -> {data.get('id', 'unknown')}")
-                else:
-                    if not self.quiet:
-                        print(f"[WARN] {self.template_dir}: invalid format")
-            except Exception as e:
-                if not self.quiet:
-                    print(f"[ERROR] Loading {self.template_dir}: {e}")
+            except:
+                pass
         else:
             if not os.path.isdir(self.template_dir):
-                if not self.quiet:
-                    print(f"[WARN] Template directory '{self.template_dir}' not found.")
                 return
-            yaml_files = []
             for root, _, files in os.walk(self.template_dir):
                 for file in files:
                     if file.endswith(('.yaml', '.yml')):
-                        yaml_files.append(os.path.join(root, file))
-            for path in yaml_files:
-                try:
-                    with open(path, 'r') as f:
-                        data = yaml.safe_load(f)
-                    if data and isinstance(data, dict) and 'id' in data:
-                        if 'requests' not in data or not isinstance(data['requests'], list):
-                            continue
-                        data['_file'] = path
-                        self.templates.append(data)
-                        if not self.quiet:
-                            print(f"[LOADING] {path} -> {data.get('id', 'unknown')}")
-                except:
-                    pass
+                        path = os.path.join(root, file)
+                        try:
+                            with open(path, 'r') as f:
+                                data = yaml.safe_load(f)
+                            if data and isinstance(data, dict) and 'id' in data:
+                                if 'requests' not in data or not isinstance(data['requests'], list):
+                                    continue
+                                data['_file'] = path
+                                self.templates.append(data)
+                                if not self.quiet:
+                                    print(f"[LOADING] {path} -> {data.get('id', 'unknown')}")
+                        except:
+                            pass
 
     def _substitute(self, value, extra_context=None):
         if extra_context is None:
@@ -745,19 +322,16 @@ class Scanner:
         ctx.update(self.auth.auth_data)
         def replace(match):
             expr = match.group(1).strip()
-            if any(op in expr for op in ['+', '-', '*', '/', '//', '%', '**']):
+            if any(op in expr for op in ['+', '-', '*', '/']):
                 try:
                     allowed = {
-                        'int': int, 'float': float, 'str': str, 'bool': bool,
-                        'len': len, 'abs': abs, 'round': round,
+                        'int': int, 'float': float, 'str': str, 'len': len,
                         'random': random.randint,
                     }
                     for k, v in ctx.items():
                         if isinstance(v, (int, float, str, bool, list)):
                             allowed[k] = v
-                    if 'random' in expr:
-                        result = eval(expr, {"__builtins__": {}}, allowed)
-                        return str(result)
+                    return str(eval(expr, {"__builtins__": {}}, allowed))
                 except:
                     return match.group(0)
             if expr in ctx:
@@ -774,6 +348,32 @@ class Scanner:
             return {k: self._substitute(v, extra_context) for k, v in value.items()}
         return value
 
+    def _make_request(self, method, url, headers, body, stage, retries=3):
+        for attempt in range(retries + 1):
+            self.session = self._get_session()
+            try:
+                all_headers = self.session.headers.copy()
+                all_headers.update(headers)
+                if body and 'Content-Type' not in all_headers:
+                    all_headers['Content-Type'] = 'application/json'
+                timeout = stage.get('timeout', self.timeout)
+                self._throttle(retry=(attempt > 0))
+                resp = self.session.request(
+                    method, url, headers=all_headers, data=body,
+                    timeout=timeout, allow_redirects=True
+                )
+                if resp.status_code in [429, 503] and attempt < retries:
+                    backoff = 2 ** attempt
+                    time.sleep(backoff)
+                    continue
+                return resp
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError):
+                if attempt < retries:
+                    time.sleep(2 ** attempt)
+                    continue
+                return None
+        return None
+
     def _match_stage(self, response, stage, context):
         matchers = stage.get('matchers', [])
         if not matchers:
@@ -783,8 +383,6 @@ class Scanner:
             return False
         body_text = self._decode_response_body(response)
         if any(p in body_text.lower() for p in self.block_patterns):
-            if not self.quiet:
-                print("[INFO] Block/offline page detected – skipping matchers.")
             return False
         condition = stage.get('matchers-condition', 'and')
         results = []
@@ -814,8 +412,7 @@ class Scanner:
             negative = matcher.get('negative', False)
             found = any(re.search(p, data) for p in patterns)
             return not found if negative else found
-        else:
-            return False
+        return False
 
     def _extract_from_response(self, response, extractors, context):
         extracted = {}
@@ -823,9 +420,6 @@ class Scanner:
             return extracted
         if isinstance(extractors, dict):
             extractors = [extractors]
-        elif not isinstance(extractors, list):
-            return extracted
-        body_text = self._decode_response_body(response)
         for ex in extractors:
             if not isinstance(ex, dict):
                 continue
@@ -851,7 +445,7 @@ class Scanner:
                     pass
             elif etype == 'regex':
                 part = ex.get('part', 'body')
-                data = body_text if part == 'body' else str(response.headers)
+                data = self._decode_response_body(response) if part == 'body' else str(response.headers)
                 for pat in ex.get('regex', []):
                     matches = re.findall(pat, data)
                     if matches:
@@ -864,6 +458,58 @@ class Scanner:
                 context[name] = raw_value
                 extracted[name] = raw_value
         return extracted
+
+    def _build_evidence(self, method, url, req_headers, req_body, response):
+        body_text = self._decode_response_body(response)
+        return {
+            'method': method,
+            'url': url,
+            'request_headers': dict(req_headers),
+            'request_body': req_body,
+            'status': response.status_code,
+            'response_headers': dict(response.headers),
+            'response_body': body_text,
+            'response_length': len(response.content),
+        }
+
+    def _execute_request(self, stage, extra_context=None):
+        method = stage.get('method', 'GET').upper()
+        paths = self._substitute(stage.get('path', []), extra_context)
+        if isinstance(paths, str):
+            paths = [paths]
+        elif not isinstance(paths, list):
+            return None, None, None
+        headers = self._substitute(stage.get('headers', {}), extra_context)
+        body = self._substitute(stage.get('body', ''), extra_context)
+        raw_body = self._substitute(stage.get('raw_body', ''), extra_context)
+        req_body = raw_body or body
+        if isinstance(req_body, dict):
+            req_body = json.dumps(req_body)
+
+        payloads = stage.get('payloads', {})
+        if payloads:
+            keys = list(payloads.keys())
+            values = [self._substitute(payloads[k], extra_context) for k in keys]
+            values = [v if isinstance(v, list) else [v] for v in values]
+            import itertools
+            for combo in itertools.product(*values):
+                pctx = dict(zip(keys, combo))
+                ictx = {**extra_context, **pctx} if extra_context else pctx
+                full_path = self._substitute(paths[0], ictx)
+                full_url = urljoin(self.base_url, full_path)
+                resp = self._make_request(method, full_url, headers, req_body, stage)
+                if resp and self._match_stage(resp, stage, ictx):
+                    evidence = self._build_evidence(method, full_url, headers, req_body, resp)
+                    return resp, evidence, ictx
+            return None, None, None
+        else:
+            full_path = self._substitute(paths[0], extra_context) if paths else ''
+            full_url = urljoin(self.base_url, full_path)
+            resp = self._make_request(method, full_url, headers, req_body, stage)
+            if resp and self._match_stage(resp, stage, extra_context):
+                evidence = self._build_evidence(method, full_url, headers, req_body, resp)
+                return resp, evidence, extra_context
+            return None, None, None
 
     def _attempt_exploitation(self, finding, template):
         exploit_section = template.get('exploitation')
@@ -919,7 +565,7 @@ class Scanner:
                 'response': {'status': resp.status_code, 'headers': dict(resp.headers), 'body': resp.text},
                 'output': output,
             }
-        except Exception:
+        except:
             return None
 
     def _execute_template(self, template):
@@ -961,59 +607,7 @@ class Scanner:
                 print(f"[VULN] {severity.upper()}: {template_name} at {evidence['url']}")
             break
 
-    def _execute_request(self, stage, extra_context=None):
-        method = stage.get('method', 'GET').upper()
-        paths = self._substitute(stage.get('path', []), extra_context)
-        if isinstance(paths, str):
-            paths = [paths]
-        elif not isinstance(paths, list):
-            return None, None, None
-        headers = self._substitute(stage.get('headers', {}), extra_context)
-        body = self._substitute(stage.get('body', ''), extra_context)
-        raw_body = self._substitute(stage.get('raw_body', ''), extra_context)
-        req_body = raw_body or body
-        if isinstance(req_body, dict):
-            req_body = json.dumps(req_body)
-        payloads = stage.get('payloads', {})
-        if payloads:
-            keys = list(payloads.keys())
-            values = [self._substitute(payloads[k], extra_context) for k in keys]
-            values = [v if isinstance(v, list) else [v] for v in values]
-            import itertools
-            for combo in itertools.product(*values):
-                pctx = dict(zip(keys, combo))
-                ictx = {**extra_context, **pctx} if extra_context else pctx
-                full_path = self._substitute(paths[0], ictx)
-                full_url = urljoin(self.base_url, full_path)
-                resp = self._make_request(method, full_url, headers, req_body, stage)
-                if resp and self._match_stage(resp, stage, ictx):
-                    evidence = self._build_evidence(method, full_url, headers, req_body, resp)
-                    return resp, evidence, ictx
-            return None, None, None
-        else:
-            full_path = self._substitute(paths[0], extra_context) if paths else ''
-            full_url = urljoin(self.base_url, full_path)
-            resp = self._make_request(method, full_url, headers, req_body, stage)
-            if resp and self._match_stage(resp, stage, extra_context):
-                evidence = self._build_evidence(method, full_url, headers, req_body, resp)
-                return resp, evidence, extra_context
-            return None, None, None
-
-    def _build_evidence(self, method, url, req_headers, req_body, response):
-        body_text = self._decode_response_body(response)
-        return {
-            'method': method,
-            'url': url,
-            'request_headers': dict(req_headers),
-            'request_body': req_body,
-            'status': response.status_code,
-            'response_headers': dict(response.headers),
-            'response_body': body_text,
-            'response_length': len(response.content),
-        }
-
     def run(self):
-        # ----- Authentication -----
         if not self.skip_auth:
             if not self.quiet:
                 print("[AUTH] Attempting to authenticate...")
@@ -1027,43 +621,10 @@ class Scanner:
             if not self.quiet:
                 print("[AUTH] Skipped (--no-auth).")
 
-        # ----- Discovery (only if -T is a directory) -----
-        if os.path.isdir(self.template_dir):
-            discovery = EndpointDiscovery(self.session, self.base_url, self.quiet)
-            discovered = discovery.discover()
-            live_endpoints = discovery.get_valid_endpoints()
-            self.context['discovered_endpoints'] = live_endpoints
-            if not self.quiet:
-                print(f"[DISCOVERY] Found {len(live_endpoints)} live endpoints.")
-        else:
-            if not self.quiet:
-                print("[DISCOVERY] Skipped (single file template).")
-
-        # ----- Privilege Escalation -----
-        if not self.skip_priv:
-            if not self.quiet:
-                print("[PRIV] Running privilege escalation tests...")
-            priv = PrivilegeEscalation(self.session, self.base_url, self.quiet)
-            jwt_token = self.auth.auth_data.get('jwt')
-            priv_findings = priv.run_all(jwt_token)
-            for f in priv_findings:
-                self.findings.append({
-                    'template_id': 'PRIV-ESCALATION',
-                    'name': f['type'],
-                    'severity': f['severity'],
-                    'impact': 'Attacker can gain administrative privileges.',
-                    'chain': 'Combine with BOLA to access all users.',
-                    'evidence': {'details': f['details']},
-                })
-                if not self.quiet:
-                    print(f"[VULN] {f['severity'].upper()}: {f['type']}")
-        else:
-            if not self.quiet:
-                print("[PRIV] Skipped (--no-priv).")
-
-        # ----- Load and execute templates -----
         self.load_templates()
         if not self.templates:
+            if not self.quiet:
+                print("[WARN] No templates loaded. Nothing to scan.")
             return {
                 'url': self.raw_url,
                 'base_url': self.base_url,
@@ -1091,9 +652,6 @@ class Scanner:
         }
 
 
-# ==================================================================
-# CONVENIENCE FUNCTION
-# ==================================================================
 def scan_target(url, quiet=False, template_dir='templates/', **kwargs):
     scanner = Scanner(
         url=url,
@@ -1113,12 +671,3 @@ def scan_target(url, quiet=False, template_dir='templates/', **kwargs):
         skip_auth=kwargs.get('skip_auth', False),
     )
     return scanner.run()
-
-
-if __name__ == '__main__':
-    import sys
-    if len(sys.argv) > 1:
-        result = scan_target(sys.argv[1], quiet=False)
-        print(json.dumps(result, indent=2, default=str))
-    else:
-        print("Usage: python scanner.py <url>")

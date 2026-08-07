@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-VulnForge CLI – Full control, aggressive by default, with all flags.
+VulnForge CLI – Full‑featured, aggressive by default, with AI‑powered reports.
 """
 
 import argparse
@@ -54,7 +54,7 @@ BANNER = f"""
   ╚═══╝   ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚═════╝ ╚══════╝
 {Style.RESET_ALL}
 {Fore.MAGENTA}⚡ VulnForge v1.0 – Aggressive by Default ⚡{Style.RESET_ALL}
-{Fore.YELLOW}🔍 Full request/response • Impact • Chain • Database • Reports{Style.RESET_ALL}
+{Fore.YELLOW}🔍 Full request/response • Impact • Chain • AI Reports • Database{Style.RESET_ALL}
 {Fore.GREEN}💻 One Engine. Every Website Vulnerabilities.{Style.RESET_ALL}
 """
 
@@ -153,13 +153,16 @@ def spinner_task(stop_event, message="Scanning"):
     sys.stdout.write('\r' + ' ' * 40 + '\r')
 
 def scan_single_target(target, args, progress_callback=None):
+    start_time = datetime.now().isoformat()
     result = {
         'url': target,
         'scan_id': None,
         'findings': [],
         'fingerprint': {},
         'error': None,
-        'timestamp': datetime.now().isoformat(),
+        'timestamp': start_time,
+        'start_time': start_time,
+        'end_time': None,
     }
     try:
         if not args.no_fingerprint:
@@ -189,16 +192,67 @@ def scan_single_target(target, args, progress_callback=None):
         )
         result['scan_id'] = scan_result.get('scan_id')
         result['findings'] = scan_result.get('findings', [])
+        result['end_time'] = datetime.now().isoformat()
 
-        if args.db:
-            init_db()
-            save_scan(result['scan_id'], target, result['fingerprint'], result['findings'])
+        # Always save to database
+        init_db()
+        save_scan(result['scan_id'], target, result['fingerprint'], result['findings'],
+                  start_time=result['start_time'], end_time=result['end_time'])
 
     except Exception as e:
         result['error'] = str(e)
+        result['end_time'] = datetime.now().isoformat()
     if progress_callback:
         progress_callback()
     return result
+
+def get_ai_client(args):
+    if not args.ai:
+        return None
+    try:
+        from core.report import OllamaClient, ClaudeClient, HackerAIClient
+    except ImportError:
+        print(f"{Fore.YELLOW}[WARN] core.report not found. AI disabled.{Style.RESET_ALL}")
+        return None
+    if args.ai_provider == 'claude':
+        if not args.claude_key:
+            print(f"{Fore.RED}[ERROR] Claude API key required (--claude-key){Style.RESET_ALL}")
+            sys.exit(1)
+        return ClaudeClient(api_key=args.claude_key, model=args.ai_model or "claude-3-haiku-20240307")
+    elif args.ai_provider == 'hackerai':
+        if not args.hackerai_key:
+            print(f"{Fore.RED}[ERROR] HackerAI API key required (--hackerai-key){Style.RESET_ALL}")
+            sys.exit(1)
+        from core.report import HackerAIClient
+        base_url = args.ai_url or "https://api.openai.com"
+        return HackerAIClient(api_key=args.hackerai_key, base_url=base_url,
+                              model=args.ai_model or "gpt-3.5-turbo")
+    else:
+        return OllamaClient(model=args.ai_model or "llama2",
+                            base_url=args.ai_url or "http://localhost:11434")
+
+def generate_report(scan_id, args):
+    from core.database import get_scan
+    from core.report import ReportGenerator
+    init_db()
+    scan = get_scan(scan_id)
+    if not scan:
+        print(f"{Fore.RED}Scan ID '{scan_id}' not found.{Style.RESET_ALL}")
+        sys.exit(1)
+
+    if 'start_time' not in scan:
+        scan['start_time'] = scan.get('timestamp', datetime.now().isoformat())
+    if 'end_time' not in scan:
+        scan['end_time'] = datetime.now().isoformat()
+
+    ai_client = get_ai_client(args)
+
+    generator = ReportGenerator(scan, output_dir="output", ai_client=ai_client,
+                                timezone_name=args.timezone,
+                                city=args.report_city,
+                                country=args.report_country)
+    filepath = generator.save_report(format=args.format)
+    print(f"{Fore.GREEN}[REPORT] Saved to {filepath}{Style.RESET_ALL}")
 
 # ------------------------------------------------------------------
 # Main
@@ -206,9 +260,13 @@ def scan_single_target(target, args, progress_callback=None):
 
 def main():
     parser = argparse.ArgumentParser(description="VulnForge – Aggressive by Default")
-    target_group = parser.add_mutually_exclusive_group(required=True)
+    
+    # Target group – now optional because --history and --scan-id don't need it
+    target_group = parser.add_mutually_exclusive_group(required=False)
     target_group.add_argument('-u', '--url', help='Single target URL')
     target_group.add_argument('-l', '--list', help='File with URLs')
+    
+    # Scanning options
     parser.add_argument('-t', '--threads', type=int, default=10)
     parser.add_argument('-T', '--templates', default='templates/', help='Template file or directory')
     parser.add_argument('--proxy-file', help='Proxy file (proxies.txt) – loaded if exists')
@@ -225,34 +283,70 @@ def main():
     parser.add_argument('--no-aggressive', action='store_true', help='Turn off aggressive defaults (use conservative settings)')
     parser.add_argument('--no-priv', action='store_true', help='Skip privilege escalation tests')
     parser.add_argument('--no-auth', action='store_true', help='Skip authentication (register/login)')
-    parser.add_argument('--report', action='store_true', help='Generate a HackerOne-style report for each finding')
-    parser.add_argument('--db', action='store_true', help='Store results in SQLite')
-    parser.add_argument('--history', action='store_true', help='Show scan history')
-    parser.add_argument('--scan-id', help='Show details of a specific scan')
-    parser.add_argument('-q', '--quiet', action='store_true', help='Suppress all output except findings')
-    parser.add_argument('--debug', action='store_true', help='Show debug output (loading, etc.)')
-    parser.add_argument('--no-fingerprint', action='store_true')
-    parser.add_argument('-o', '--output', help='Output file (JSON)')
-    parser.add_argument('--json', action='store_true', help='Output JSON to stdout')
+    parser.add_argument('--no-fingerprint', action='store_true', help='Skip fingerprinting (saves time)')
     parser.add_argument('--username', help='Manual username for authentication')
     parser.add_argument('--password', help='Manual password for authentication')
 
+    # Database & reporting
+    parser.add_argument('--history', action='store_true', help='Show scan history (from database)')
+    parser.add_argument('--scan-id', help='Show details of a specific scan by ID')
+    parser.add_argument('--report', help='Generate a report from a saved scan ID')
+    parser.add_argument('--format', choices=['html', 'pdf', 'md'], default='html',
+                        help='Report format (default: html)')
+
+    # AI options (free)
+    parser.add_argument('--ai', action='store_true', help='Enable AI analysis (uses Ollama by default)')
+    parser.add_argument('--ai-provider', choices=['ollama', 'claude', 'hackerai'], default='ollama',
+                        help='AI provider (default: ollama)')
+    parser.add_argument('--ai-model', default='llama2', help='AI model name (for Ollama or HuggingFace)')
+    parser.add_argument('--ai-url', help='Custom base URL for OpenAI‑compatible API (for hackerai)')
+    parser.add_argument('--claude-key', help='Anthropic Claude API key')
+    parser.add_argument('--hackerai-key', help='API key for HackerAI/OpenAI‑compatible service')
+
+    # Report location overrides (distinct names to avoid conflict)
+    parser.add_argument('--timezone', help='Override timezone (e.g., "America/New_York")')
+    parser.add_argument('--report-city', help='Override city name for reports')
+    parser.add_argument('--report-country', help='Override country name for reports')
+
+    # Output
+    parser.add_argument('-q', '--quiet', action='store_true', help='Suppress all output except findings')
+    parser.add_argument('--debug', action='store_true', help='Show debug output (loading, etc.)')
+    parser.add_argument('-o', '--output', help='Output file (JSON)')
+    parser.add_argument('--json', action='store_true', help='Output JSON to stdout')
+
     args = parser.parse_args()
 
+    # If no target and no history/scan-id/report, show help
+    if not (args.url or args.list or args.history or args.scan_id or args.report):
+        parser.print_help()
+        sys.exit(1)
+
+    # --- Handle history / scan-id / report (no scan needed) ---
     if args.history:
         init_db()
         scans = get_scans(20)
         print(f"{Fore.CYAN}Scan History:{Style.RESET_ALL}")
-        for s in scans:
-            print(f"  {s['scan_id']}: {s['target']} ({s['findings_count']} findings)")
+        if not scans:
+            print(f"{Fore.YELLOW}No scans found in database.{Style.RESET_ALL}")
+        else:
+            for s in scans:
+                print(f"  {s['scan_id']}: {s['target']} ({s['findings_count']} findings) - {s['timestamp']}")
         sys.exit(0)
 
     if args.scan_id:
         init_db()
         scan = get_scan(args.scan_id)
+        if not scan:
+            print(f"{Fore.RED}Scan ID '{args.scan_id}' not found.{Style.RESET_ALL}")
+            sys.exit(1)
         print(json.dumps(scan, indent=2, default=str))
         sys.exit(0)
 
+    if args.report:
+        generate_report(args.report, args)
+        sys.exit(0)
+
+    # --- If we're here, we have a target to scan ---
     if not args.quiet:
         print(BANNER)
 
@@ -345,9 +439,6 @@ def main():
             if args.report:
                 print(generate_hackerone_report(f, r.get('fingerprint', {})))
             print("")
-
-    if args.db and not args.quiet:
-        print(f"{Fore.GREEN}[DB] Results stored in vulnforge.db{Style.RESET_ALL}")
 
 if __name__ == '__main__':
     main()

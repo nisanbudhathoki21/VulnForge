@@ -1,3 +1,4 @@
+```markdown
 <p align="center">
   <img src="docs/Banner/banner.png" alt="VulnForge Banner" width="900">
 </p>
@@ -23,6 +24,7 @@ VulnForge is a modern, production‑grade web vulnerability scanner built for **
 | 🌍 **WAF Evasion** | Rotates IPs (proxy file), User‑Agents, and uses delay jitter to avoid detection. |
 | 📦 **50+ Built‑in Templates** | Covers OWASP Top 10, including SQLi, XSS, SSTI, BOLA, CSRF, JWT, OAuth, and more. |
 | 📝 **HackerOne‑Style Reports** | Professional output ready for submission – includes impact, chain, and remediation. |
+| 🧠 **AI‑Powered Summaries** | Get executive summaries from Ollama (free, local) – included in reports. |
 | 🗄️ **SQLite Database** | Stores scan history – query past findings with `--history` and `--scan-id`. |
 | ⚡ **Aggressive by Default** | Optimised for speed, but easily tuned for stealth with `--no-aggressive`. |
 | 🔄 **Proxy Rotation** | Supports rotating proxies with country‑based filtering (`--proxy-file`, `--country`). |
@@ -37,144 +39,126 @@ VulnForge is a modern, production‑grade web vulnerability scanner built for **
 - Python 3.10 or later
 - `pip` (Python package manager)
 - Git (to clone the repository)
+- (Optional) Ollama for free AI‑powered reports
 
 ### Step 1: Clone the repository
 
 ```bash
 git clone https://github.com/nisanbudhathoki21/VulnForge.git
 cd VulnForge
-Step 2: Create a virtual environment (recommended)
-bash
+```
 
+### Step 2: Create a virtual environment (recommended)
+
+```bash
 python3 -m venv .venv
 source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+```
 
-Step 3: Install dependencies
-bash
+### Step 3: Install dependencies
 
+```bash
 pip install -r requirements.txt
+```
 
-Step 4: Install VulnForge in editable mode
-bash
+### Step 4: Install VulnForge in editable mode
 
+```bash
 pip install -e .
+```
 
-Step 5: Verify installation
-bash
+### Step 5: Verify installation
 
+```bash
 VulnForge --help
+```
 
 You should see the help menu and the awesome banner.
 
-    Note: If VulnForge is not found, run python main.py -u https://target.example instead.
+> **Note:** If `VulnForge` is not found, run `python main.py -u https://target.example` instead.
 
+---
 
-🚀 Quick Start
+## 🚀 Quick Start
 
-Basic scan (aggressive defaults)
-bash
+### Basic scan (aggressive defaults)
 
+```bash
 VulnForge -u https://example.com
+```
 
-Scan a single template (fast)
-bash
+### Scan a single template (fast)
 
-VulnForge -u https://example.com -T templates/low/headers/security-headers.vft.yaml
+```bash
+VulnForge -u https://example.com -T templates/low/headers/security-headers.yaml
+```
 
-Generate a HackerOne‑style report
-bash
+### Generate a HackerOne‑style report (no AI)
 
-VulnForge -u https://example.com --report
+```bash
+VulnForge --report <SCAN_ID> --format html
+```
 
-Scan multiple targets from a file
-bash
+### Generate an AI‑powered report (requires Ollama)
 
+```bash
+VulnForge --report <SCAN_ID> --ai --ai-provider ollama --ai-model llama2 --format html
+```
+
+### Scan multiple targets from a file
+
+```bash
 VulnForge -l targets.txt
+```
 
-View scan history
-bash
+### View scan history
 
+```bash
 VulnForge --history
 VulnForge --scan-id <scan_id>
+```
 
-Generate a Markdown report from a past scan
-bash
+---
 
-VulnForge --report <scan_id>
+## 🧠 AI Setup (Free, Local)
 
-🔧 Command‑Line Options
-Flag	Description
--u URL	Single target URL
--l FILE	File containing list of URLs (one per line)
--t N	Number of concurrent threads (default: 10)
--T DIR	Template file or directory (default: templates/)
---proxy-file FILE	Rotate proxies from a file (format: http://proxy:port US)
---country CODE	Prefer proxies from a specific country (e.g., US)
---rate-limit N	Maximum requests per second (default aggressive: 10)
---delay SECONDS	Base delay between requests (default aggressive: 0.5s)
---jitter SECONDS	Random jitter to avoid pattern detection (default aggressive: 0.3s)
---timeout SECONDS	Request timeout (default: 10s)
---exploit	Enable exploitation (ON by default in aggressive mode)
---no-exploit	Disable exploitation
---full	Show full request/response in output (ON by default)
---no-full	Disable full request/response output
---no-aggressive	Use conservative settings (delay 2s, no exploit, no full output)
---no-auth	Skip authentication (register/login)
---no-priv	Skip privilege escalation tests
---no-proxy	Disable proxy rotation
---no-fingerprint	Skip fingerprinting (saves time)
---report	Generate HackerOne‑style report for each finding
---db	Store results in SQLite database
---history	Show scan history
---scan-id ID	Show details of a specific scan
---json	Output results as JSON
--o FILE	Save output to file (JSON)
--q	Quiet mode – only show findings
---debug	Show debug output (template loading, etc.)
+VulnForge can generate executive summaries using **Ollama** – a free, local AI that runs on your machine.
 
-📁 Project Structure
+### 1. Install Ollama
 
-text
+```bash
+curl -fsSL https://ollama.com/install.sh | sh
+```
 
-VulnForge/
-├── core/                         # Core modules
-│   ├── fingerprint.py            # Technology & WAF detection
-│   ├── database.py               # SQLite storage & retrieval
-│   └── exploit.py                # Exploitation helpers
-├── engine/
-│   └── scanner.py                # Main scanning engine (god‑level)
-├── terminal/
-│   └── cli.py                    # Command‑line interface
-├── templates/                    # YAML vulnerability templates
-│   ├── critical/                 # Critical severity
-│   │   ├── injection/            # SQLi, NoSQL, Command Injection
-│   │   └── server-side/          # SSTI, SSRF, Path Traversal
-│   ├── high/                     # High severity
-│   │   ├── api/                  # BOLA, Mass Assignment
-│   │   ├── authorization/        # IDOR
-│   │   ├── upload/               # File Upload vulnerabilities
-│   │   └── xss/                  # Cross‑Site Scripting
-│   ├── low/                      # Low severity
-│   │   ├── exposure/             # Git, .env exposure
-│   │   └── headers/              # Missing security headers
-│   └── medium/                   # Medium severity
-│       ├── authentication/       # OAuth, JWT, CSRF
-│       ├── graphql/              # GraphQL introspection
-│       └── misconfiguration/     # CORS, Redirects
-├── docs/                         # Documentation
-│   ├── Banner/                   # Banner images
-│   └── diagrams/                 # Architecture diagrams
-├── main.py                       # Entry point (calls terminal.cli)
-├── requirements.txt              # Python dependencies
-├── setup.py                      # Package installation
-├── LICENSE                       # MIT License
-└── README.md                     # This file
+### 2. Pull a model
 
-📝 Writing Your Own Templates
+```bash
+ollama pull llama2:7b   # ~3.8GB, good for summaries
+# or tiny (faster):
+ollama pull tinyllama   # ~600MB
+```
+
+### 3. Verify Ollama is running
+
+```bash
+ollama list   # shows installed models
+```
+
+### 4. Use with VulnForge
+
+```bash
+VulnForge --report <SCAN_ID> --ai --ai-provider ollama --ai-model llama2 --format html
+```
+
+> 💡 **No API key required** – everything runs locally!
+
+---
+
+## 📝 Writing Your Own Templates
 
 Templates are simple YAML files. Here’s a minimal example:
-yaml
 
+```yaml
 id: example-01
 name: Example Template
 severity: high
@@ -191,87 +175,158 @@ requests:
         part: body
         words:
           - "vulnerable"
+```
 
-Place it in any subfolder under templates/ – it will be loaded automatically.
-📄 Reporting
-HackerOne‑Style Report
+Place it in any subfolder under `templates/` – it will be loaded automatically.
 
-When you use --report, each finding includes:
+---
 
-    Title
+## 📄 Reporting
 
-    CWE
+### HackerOne‑Style Report (HTML/PDF/Markdown)
 
-    Severity
+When you use `--report`, each finding includes:
 
-    Summary
+- **Title**
+- **CWE**
+- **Severity**
+- **Summary**
+- **Steps to Reproduce**
+- **Full Request** (method, URL, headers, body)
+- **Full Response** (status, headers, body)
+- **Exploitation Evidence** (if `--exploit` was used)
+- **Remediation**
+- **Impact**
+- **Chain**
+- **AI Executive Summary** (if `--ai` is enabled)
 
-    Steps to Reproduce
+### Generate a report
 
-    Full Request (method, URL, headers, body)
+```bash
+# HTML (default)
+VulnForge --report <SCAN_ID> --format html
 
-    Full Response (status, headers, body)
+# PDF (requires weasyprint)
+VulnForge --report <SCAN_ID> --format pdf
 
-    Exploitation Evidence (if --exploit was used)
+# Markdown
+VulnForge --report <SCAN_ID> --format md
+```
 
-    Remediation
+All reports are saved in the `output/` folder.
 
-    Impact
+### JSON Output (for automation)
 
-    Chain
-
-Example:
-bash
-
-VulnForge -u https://example.com --report --exploit --full
-
-JSON Output
-
-For automation or integration:
-bash
-
+```bash
 VulnForge -u https://example.com --json
+```
 
-🧪 Testing on Vulnerable Targets
+---
+
+## 🔧 Command‑Line Options
+
+| Flag | Description |
+| :--- | :--- |
+| `-u URL` | Single target URL |
+| `-l FILE` | File containing list of URLs (one per line) |
+| `-t N` | Number of concurrent threads (default: 10) |
+| `-T DIR` | Template file or directory (default: `templates/`) |
+| `--proxy-file FILE` | Rotate proxies from a file (format: `http://proxy:port US`) |
+| `--country CODE` | Prefer proxies from a specific country (e.g., `US`) |
+| `--rate-limit N` | Maximum requests per second (default aggressive: 10) |
+| `--delay SECONDS` | Base delay between requests (default aggressive: 0.5s) |
+| `--jitter SECONDS` | Random jitter to avoid pattern detection (default aggressive: 0.3s) |
+| `--timeout SECONDS` | Request timeout (default: 10s) |
+| `--exploit` | Enable exploitation (ON by default in aggressive mode) |
+| `--no-exploit` | Disable exploitation |
+| `--full` | Show full request/response in output (ON by default) |
+| `--no-full` | Disable full request/response output |
+| `--no-aggressive` | Use conservative settings (delay 2s, no exploit, no full output) |
+| `--no-auth` | Skip authentication (register/login) |
+| `--no-priv` | Skip privilege escalation tests |
+| `--no-proxy` | Disable proxy rotation |
+| `--no-fingerprint` | Skip fingerprinting (saves time) |
+| `--report ID` | Generate a report from a saved scan ID |
+| `--format {html,pdf,md}` | Report format (default: html) |
+| `--ai` | Enable AI analysis (uses Ollama by default) |
+| `--ai-provider {ollama,claude,hackerai}` | AI provider (default: ollama) |
+| `--ai-model NAME` | AI model name (e.g., `llama2`, `tinyllama`) |
+| `--history` | Show scan history |
+| `--scan-id ID` | Show details of a specific scan |
+| `--json` | Output results as JSON |
+| `-o FILE` | Save output to file (JSON) |
+| `-q` | Quiet mode – only show findings |
+| `--debug` | Show debug output (template loading, etc.) |
+
+---
+
+## 🧪 Testing on Vulnerable Targets
 
 VulnForge is best tested on deliberately vulnerable applications:
 
-    OWASP Juice Shop – modern API‑heavy app
-
-    OWASP WebGoat – classic training app
-
-    DVWA – Damn Vulnerable Web Application
+- **[OWASP Juice Shop](https://juice-shop.herokuapp.com/)** – modern API‑heavy app
+- **[OWASP WebGoat](https://github.com/WebGoat/WebGoat)** – classic training app
+- **[DVWA](http://www.dvwa.co.uk/)** – Damn Vulnerable Web Application
 
 Example:
-bash
 
-VulnForge -u https://juice-shop.herokuapp.com/
+```bash
+VulnForge -u https://juice-shop.herokuapp.com/ --no-aggressive --delay 1
+```
 
-🤝 Contributing
+---
+
+## 🤝 Contributing
 
 We welcome contributions! Please open an issue or pull request on GitHub.
 
-    Bug reports – include full steps to reproduce.
+- **Bug reports** – include full steps to reproduce.
+- **Feature requests** – explain the use case clearly.
+- **New templates** – ensure they are well‑tested and include impact/chain.
 
-    Feature requests – explain the use case clearly.
+---
 
-    New templates – ensure they are well‑tested and include impact/chain.
+## 📄 License
 
-📄 License
+This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.
 
-This project is licensed under the MIT License – see the LICENSE file for details.
-🙌 Acknowledgments
+---
 
-    Built with ❤️ for the bug bounty community.
+## 🙌 Acknowledgments
 
-    Inspired by tools like Nuclei, Burp Suite, and OWASP Juice Shop.
+- Built with ❤️ for the bug bounty community.
+- Inspired by tools like **Nuclei**, **Burp Suite**, and **OWASP Juice Shop**.
+- Special thanks to the open‑source security community.
 
-    Special thanks to the open‑source security community.
+---
 
-📬 Contact
+## 📬 Contact
 
-    GitHub: https://github.com/nisanbudhathoki21/VulnForge
+- **GitHub**: [https://github.com/nisanbudhathoki21/VulnForge](https://github.com/nisanbudhathoki21/VulnForge)
+- **Instagram**: [@nisanbudhathoki21](https://instagram.com/nisanbudhathoki21)
 
-    instagram : nisanbudhathoki21
+---
 
-Happy Hunting! 🐛💥
+**Happy Hunting! 🐛💥**
+```
+
+---
+
+## ✅ How to update
+
+1. **Replace your README**:
+
+```bash
+nano README.md
+```
+
+2. **Copy and paste** the content above, save (`Ctrl+O`, `Enter`), and exit (`Ctrl+X`).
+
+3. **Commit and push**:
+
+```bash
+git add README.md
+git commit -m "docs: add AI setup, comprehensive usage, and installation guide"
+git push origin main
+```
+

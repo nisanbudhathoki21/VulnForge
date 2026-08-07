@@ -1,7 +1,13 @@
-.venv/
 __pycache__/
 *.pyc
+*.pyo
+*.so
+.venv/
+venv/
 vulnforge.db
 output/
-.env
-*.egg-info/
+*.log
+*.tmp
+.DS_Store
+*.swp
+*.swo
