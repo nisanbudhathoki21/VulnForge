@@ -1,7 +1,4 @@
-```markdown
-<p align="center">
-  <img src="docs/Banner/banner.png" alt="VulnForge Banner" width="900">
-</p>
+![VulnForge Banner](docs/Banner/banner.png)
 
 # 🛡️ VulnForge
 
