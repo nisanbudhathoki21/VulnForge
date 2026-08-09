@@ -1,329 +1,825 @@
-![VulnForge Banner](docs/Banner/banner.png)
-
 # 🛡️ VulnForge
 
-**One Engine. Every Website Vulnerabilities.**
+**YAML-driven web application vulnerability scanner and security testing framework.**
 
-VulnForge is a modern, production‑grade web vulnerability scanner built for **bug bounty hunters**, **penetration testers**, and **security researchers**. It combines a powerful Python engine with YAML‑based templates to detect, verify, and exploit vulnerabilities in web applications.
+VulnForge is a Python-based security testing framework designed to automate repeatable web application vulnerability checks using YAML templates.
 
-> 💡 **Why VulnForge?**  
-> Because you shouldn't need 10 different tools to test one website.
+It combines a template execution engine, HTTP request handling, response matching, extraction, contextual variable rendering, evidence collection, scan persistence, and reporting into a single workflow.
+
+> **For authorized security testing only.**
+>
+> Only scan applications, APIs, and infrastructure that you own or have explicit permission to test.
 
 ---
 
 ## ✨ Features
 
-| Feature | Description |
-| :--- | :--- |
-| 🔍 **Full Request/Response Capture** | Like Burp Suite, but automated – every finding includes the full HTTP exchange. |
-| 🧠 **Smart Endpoint Discovery** | Automatically finds APIs, GraphQL endpoints, and hidden paths using a 300+ wordlist. |
-| 🔐 **Auto‑Authentication** | Automatically registers and logs in to targets – no manual session setup. |
-| 🌍 **WAF Evasion** | Rotates IPs (proxy file), User‑Agents, and uses delay jitter to avoid detection. |
-| 📦 **50+ Built‑in Templates** | Covers OWASP Top 10, including SQLi, XSS, SSTI, BOLA, CSRF, JWT, OAuth, and more. |
-| 📝 **HackerOne‑Style Reports** | Professional output ready for submission – includes impact, chain, and remediation. |
-| 🧠 **AI‑Powered Summaries** | Get executive summaries from Ollama (free, local) – included in reports. |
-| 🗄️ **SQLite Database** | Stores scan history – query past findings with `--history` and `--scan-id`. |
-| ⚡ **Aggressive by Default** | Optimised for speed, but easily tuned for stealth with `--no-aggressive`. |
-| 🔄 **Proxy Rotation** | Supports rotating proxies with country‑based filtering (`--proxy-file`, `--country`). |
-| 🚀 **Exploitation Support** | Optional `--exploit` flag attempts to prove vulnerabilities with real payloads. |
+| Feature                        | Description                                                                   |
+| ------------------------------ | ----------------------------------------------------------------------------- |
+| 🔍 **Template-Based Scanning** | Execute reusable YAML security-testing templates against a target.            |
+| 🧩 **Template Runtime**        | Supports variables, filters, arithmetic expressions, and recursive rendering. |
+| 🔐 **Authorization Testing**   | Templates for BOLA/IDOR and function-level authorization testing.             |
+| 💉 **Injection Testing**       | SQL injection, NoSQL injection, command injection, SSTI, and related checks.  |
+| 🌐 **API Security Testing**    | API-focused checks including BOLA and mass-assignment patterns.               |
+| 🕸️ **XSS Testing**            | Reflected, stored, and DOM-oriented XSS templates.                            |
+| 🔄 **Multi-Stage Templates**   | Extract values from one response and reuse them in subsequent requests.       |
+| 🎯 **Matchers**                | Match HTTP status codes, response words, and regular expressions.             |
+| 📤 **Extractors**              | Extract JSON, regular-expression, and raw values into template context.       |
+| 🧾 **Evidence Collection**     | Stores request and response information associated with findings.             |
+| 🗄️ **SQLite Persistence**     | Maintains scan and finding information locally.                               |
+| ⚡ **Concurrent Execution**     | Executes templates using a configurable worker pool.                          |
+| ⏱️ **Rate Limiting**           | Supports request rate limits, delays, and jitter.                             |
+| 🌍 **Proxy Support**           | Supports proxy configuration and optional country-based proxy selection.      |
+| 🔬 **Optional Exploitation**   | Templates can define optional proof-of-concept exploitation steps.            |
+| 🤖 **Optional AI Reporting**   | Supports local AI-assisted reporting where configured.                        |
+| 🧪 **Template Validation**     | Validates template structure before scanning.                                 |
 
 ---
 
-## 📦 Installation
+# 🏗️ Architecture
 
-### Prerequisites
+VulnForge follows a modular scanning architecture:
 
-- Python 3.10 or later
-- `pip` (Python package manager)
-- Git (to clone the repository)
-- (Optional) Ollama for free AI‑powered reports
+```text
+                    ┌─────────────────────┐
+                    │     CLI Interface   │
+                    └──────────┬──────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   Scanner Engine    │
+                    └──────────┬──────────┘
+                               │
+              ┌────────────────┼────────────────┐
+              ▼                ▼                ▼
+      ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+      │ Template     │ │ HTTP Client  │ │ Auth Manager │
+      │ Runtime      │ │ / Sessions   │ │              │
+      └──────┬───────┘ └──────┬───────┘ └──────────────┘
+             │                │
+             ▼                ▼
+      ┌──────────────┐ ┌──────────────┐
+      │ YAML         │ │ Requests /   │
+      │ Templates    │ │ Responses    │
+      └──────┬───────┘ └──────┬───────┘
+             │                │
+             └────────┬───────┘
+                      ▼
+               ┌──────────────┐
+               │   Matchers   │
+               │  Extractors  │
+               └──────┬───────┘
+                      │
+                      ▼
+               ┌──────────────┐
+               │   Findings   │
+               │   Evidence   │
+               └──────┬───────┘
+                      │
+             ┌────────┴────────┐
+             ▼                 ▼
+      ┌──────────────┐  ┌──────────────┐
+      │ SQLite       │  │ Reporting    │
+      │ Persistence  │  │ / Analysis   │
+      └──────────────┘  └──────────────┘
+```
 
-### Step 1: Clone the repository
+---
+
+# 📁 Project Structure
+
+```text
+VulnForge/
+├── ai/                     # Optional AI analysis
+├── config/                 # Configuration
+├── core/                   # Core helpers and verification logic
+├── correlation/            # Finding correlation
+├── database/               # SQLite persistence
+├── engine/
+│   ├── scanner.py          # Main scanner engine
+│   ├── template_runtime.py # Template expression/rendering engine
+│   └── template_validator.py
+├── extractor/              # Extraction components
+├── httpclient/             # HTTP functionality
+├── matcher/                # Response matching
+├── risk/                   # Risk/severity processing
+├── scanner/                # Supporting scanner components
+├── templates/              # YAML vulnerability templates
+├── terminal/               # CLI interface
+├── tests/                  # Runtime and integration tests
+├── tools/                  # Developer utilities
+├── reports/                # Report generation
+├── workspace/              # Scan workspace functionality
+├── main.py                 # Application entry point
+├── requirements.txt        # Python dependencies
+└── README.md
+```
+
+---
+
+# 📦 Installation
+
+## Requirements
+
+* Python **3.10+**
+* Git
+* pip
+* Internet access for remote targets
+* Linux/macOS/Windows with Python support
+
+Optional:
+
+* Ollama for local AI-assisted analysis
+* WeasyPrint if PDF reporting is enabled by the installed report stack
+
+---
+
+## 1. Clone the Repository
 
 ```bash
 git clone https://github.com/nisanbudhathoki21/VulnForge.git
 cd VulnForge
 ```
 
-### Step 2: Create a virtual environment (recommended)
+## 2. Create a Virtual Environment
+
+Linux/macOS:
 
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate   # On Windows: .venv\Scripts\activate
+source .venv/bin/activate
 ```
 
-### Step 3: Install dependencies
+Windows:
+
+```powershell
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+## 3. Install Dependencies
 
 ```bash
 pip install -r requirements.txt
 ```
 
-### Step 4: Install VulnForge in editable mode
+If the project is configured as an installable Python package:
 
 ```bash
 pip install -e .
 ```
 
-### Step 5: Verify installation
+## 4. Verify the Installation
+
+First check the CLI:
+
+```bash
+python main.py --help
+```
+
+If the package installs a `VulnForge` command, you can alternatively use:
 
 ```bash
 VulnForge --help
 ```
 
-You should see the help menu and the awesome banner.
-
-> **Note:** If `VulnForge` is not found, run `python main.py -u https://target.example` instead.
+Use whichever entry point is provided by the current installation.
 
 ---
 
-## 🚀 Quick Start
+# 🚀 Quick Start
 
-### Basic scan (aggressive defaults)
+## Scan a Target
+
+```bash
+python main.py -u https://example.com
+```
+
+Or, if the installed CLI command is available:
 
 ```bash
 VulnForge -u https://example.com
 ```
 
-### Scan a single template (fast)
+Only use targets for which you have authorization.
 
-```bash
-VulnForge -u https://example.com -T templates/low/headers/security-headers.yaml
+---
+
+## Scan Multiple Targets
+
+Create a file:
+
+```text
+targets.txt
 ```
 
-### Generate a HackerOne‑style report (no AI)
+Example:
 
-```bash
-VulnForge --report <SCAN_ID> --format html
+```text
+https://example.com
+https://example.org
+https://test.example.net
 ```
 
-### Generate an AI‑powered report (requires Ollama)
+Then:
 
 ```bash
-VulnForge --report <SCAN_ID> --ai --ai-provider ollama --ai-model llama2 --format html
-```
-
-### Scan multiple targets from a file
-
-```bash
-VulnForge -l targets.txt
-```
-
-### View scan history
-
-```bash
-VulnForge --history
-VulnForge --scan-id <scan_id>
+python main.py -l targets.txt
 ```
 
 ---
 
-## 🧠 AI Setup (Free, Local)
+# 🧩 YAML Templates
 
-VulnForge can generate executive summaries using **Ollama** – a free, local AI that runs on your machine.
+VulnForge uses YAML templates to define security checks.
 
-### 1. Install Ollama
+Templates are organized by vulnerability category:
 
-```bash
-curl -fsSL https://ollama.com/install.sh | sh
+```text
+templates/
+├── authorization/
+├── business-logic/
+├── critical/
+├── high/
+├── medium/
+├── low/
+└── starbucks-jp/
 ```
 
-### 2. Pull a model
+The current repository contains **45 validated templates**.
+
+Validate them with:
 
 ```bash
-ollama pull llama2:7b   # ~3.8GB, good for summaries
-# or tiny (faster):
-ollama pull tinyllama   # ~600MB
+python tools/validate_templates.py
 ```
 
-### 3. Verify Ollama is running
+Expected result:
 
-```bash
-ollama list   # shows installed models
+```text
+Valid templates   : 45
+Invalid templates : 0
 ```
 
-### 4. Use with VulnForge
-
-```bash
-VulnForge --report <SCAN_ID> --ai --ai-provider ollama --ai-model llama2 --format html
-```
-
-> 💡 **No API key required** – everything runs locally!
+The exact number may change as templates are added or removed.
 
 ---
 
-## 📝 Writing Your Own Templates
+# 🧠 Template Runtime
 
-Templates are simple YAML files. Here’s a minimal example:
+The template runtime supports contextual variables and filters.
+
+For example:
+
+```text
+{{own_id}}
+```
+
+can resolve to:
+
+```text
+100
+```
+
+Filters can transform values:
+
+```text
+{{own_id|int}}
+{{own_id|str}}
+{{own_id|hex}}
+{{own_id|base64}}
+```
+
+Arithmetic expressions can also be used:
+
+```text
+{{own_id|int+1}}
+{{own_id|int-1}}
+```
+
+For example:
+
+```text
+/api/users/{{own_id|int+1}}
+```
+
+can render as:
+
+```text
+/api/users/101
+```
+
+The runtime also recursively renders nested lists and dictionaries.
+
+---
+
+# 📝 Example Template
+
+A simplified template looks like:
 
 ```yaml
 id: example-01
-name: Example Template
-severity: high
-impact: This vulnerability allows attackers to do bad things.
-chain: Combine with CSRF to escalate impact.
+name: Example Security Check
+severity: medium
+
+impact: |
+  Example security impact.
+
 requests:
   - method: GET
     path:
-      - "{{BaseURL}}/vulnerable?param=1"
+      - "/example"
+
     matchers:
       - type: status
-        status: 200
+        status:
+          - 200
+
       - type: word
         part: body
         words:
-          - "vulnerable"
+          - "example"
 ```
 
-Place it in any subfolder under `templates/` – it will be loaded automatically.
+Place valid YAML templates anywhere under the configured template directory.
 
 ---
 
-## 📄 Reporting
+# 🔄 Multi-Stage Testing
 
-### HackerOne‑Style Report (HTML/PDF/Markdown)
+Templates can extract information from responses and reuse it later.
 
-When you use `--report`, each finding includes:
+Conceptually:
 
-- **Title**
-- **CWE**
-- **Severity**
-- **Summary**
-- **Steps to Reproduce**
-- **Full Request** (method, URL, headers, body)
-- **Full Response** (status, headers, body)
-- **Exploitation Evidence** (if `--exploit` was used)
-- **Remediation**
-- **Impact**
-- **Chain**
-- **AI Executive Summary** (if `--ai` is enabled)
-
-### Generate a report
-
-```bash
-# HTML (default)
-VulnForge --report <SCAN_ID> --format html
-
-# PDF (requires weasyprint)
-VulnForge --report <SCAN_ID> --format pdf
-
-# Markdown
-VulnForge --report <SCAN_ID> --format md
+```text
+Request 1
+   │
+   ▼
+Response
+   │
+   ├── Extract user_id
+   │
+   ▼
+Request 2
+   │
+   └── Use {{user_id}}
 ```
 
-All reports are saved in the `output/` folder.
+Supported extraction mechanisms include:
 
-### JSON Output (for automation)
+* JSON extraction
+* Regular-expression extraction
+* Raw/context values
 
-```bash
-VulnForge -u https://example.com --json
-```
+This allows templates to model workflows rather than only isolated HTTP requests.
 
 ---
 
-## 🔧 Command‑Line Options
+# 🔍 Matchers
 
-| Flag | Description |
-| :--- | :--- |
-| `-u URL` | Single target URL |
-| `-l FILE` | File containing list of URLs (one per line) |
-| `-t N` | Number of concurrent threads (default: 10) |
-| `-T DIR` | Template file or directory (default: `templates/`) |
-| `--proxy-file FILE` | Rotate proxies from a file (format: `http://proxy:port US`) |
-| `--country CODE` | Prefer proxies from a specific country (e.g., `US`) |
-| `--rate-limit N` | Maximum requests per second (default aggressive: 10) |
-| `--delay SECONDS` | Base delay between requests (default aggressive: 0.5s) |
-| `--jitter SECONDS` | Random jitter to avoid pattern detection (default aggressive: 0.3s) |
-| `--timeout SECONDS` | Request timeout (default: 10s) |
-| `--exploit` | Enable exploitation (ON by default in aggressive mode) |
-| `--no-exploit` | Disable exploitation |
-| `--full` | Show full request/response in output (ON by default) |
-| `--no-full` | Disable full request/response output |
-| `--no-aggressive` | Use conservative settings (delay 2s, no exploit, no full output) |
-| `--no-auth` | Skip authentication (register/login) |
-| `--no-priv` | Skip privilege escalation tests |
-| `--no-proxy` | Disable proxy rotation |
-| `--no-fingerprint` | Skip fingerprinting (saves time) |
-| `--report ID` | Generate a report from a saved scan ID |
-| `--format {html,pdf,md}` | Report format (default: html) |
-| `--ai` | Enable AI analysis (uses Ollama by default) |
-| `--ai-provider {ollama,claude,hackerai}` | AI provider (default: ollama) |
-| `--ai-model NAME` | AI model name (e.g., `llama2`, `tinyllama`) |
-| `--history` | Show scan history |
-| `--scan-id ID` | Show details of a specific scan |
-| `--json` | Output results as JSON |
-| `-o FILE` | Save output to file (JSON) |
-| `-q` | Quiet mode – only show findings |
-| `--debug` | Show debug output (template loading, etc.) |
+Matchers determine whether a response satisfies the conditions defined by a template.
+
+Supported matcher types include:
+
+### Status
+
+```yaml
+matchers:
+  - type: status
+    status:
+      - 200
+```
+
+### Word
+
+```yaml
+matchers:
+  - type: word
+    part: body
+    words:
+      - "administrator"
+```
+
+### Regular Expression
+
+```yaml
+matchers:
+  - type: regex
+    part: body
+    regex:
+      - "user_[0-9]+"
+```
+
+Templates can combine multiple matchers using matcher conditions.
 
 ---
 
-## 🧪 Testing on Vulnerable Targets
+# 📊 Findings and Evidence
 
-VulnForge is best tested on deliberately vulnerable applications:
+When a template matches, VulnForge can record evidence including:
 
-- **[OWASP Juice Shop](https://juice-shop.herokuapp.com/)** – modern API‑heavy app
-- **[OWASP WebGoat](https://github.com/WebGoat/WebGoat)** – classic training app
-- **[DVWA](http://www.dvwa.co.uk/)** – Damn Vulnerable Web Application
+* HTTP method
+* Request URL
+* Request headers
+* Request body
+* Response status
+* Response headers
+* Response body
+* Response length
+* Extracted template variables
+* Template identifier
+* Severity
+* Impact information
+* Optional exploitation result
+
+This provides reproducible evidence for security testing and later reporting.
+
+---
+
+# 🗄️ Scan Persistence
+
+VulnForge uses SQLite for local scan persistence.
+
+The database allows scan information and findings to be retained between executions.
 
 Example:
 
 ```bash
-VulnForge -u https://juice-shop.herokuapp.com/ --no-aggressive --delay 1
+python main.py --history
 ```
 
----
-
-## 🤝 Contributing
-
-We welcome contributions! Please open an issue or pull request on GitHub.
-
-- **Bug reports** – include full steps to reproduce.
-- **Feature requests** – explain the use case clearly.
-- **New templates** – ensure they are well‑tested and include impact/chain.
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License – see the [LICENSE](LICENSE) file for details.
-
----
-
-## 🙌 Acknowledgments
-
-- Built with ❤️ for the bug bounty community.
-- Inspired by tools like **Nuclei**, **Burp Suite**, and **OWASP Juice Shop**.
-- Special thanks to the open‑source security community.
-
----
-
-## 📬 Contact
-
-- **GitHub**: [https://github.com/nisanbudhathoki21/VulnForge](https://github.com/nisanbudhathoki21/VulnForge)
-- **Instagram**: [@nisanbudhathoki21](https://instagram.com/nisanbudhathoki21)
-
----
-
-**Happy Hunting! 🐛💥**
-```
-
----
-
-## ✅ How to update
-
-1. **Replace your README**:
+To inspect a specific scan:
 
 ```bash
-nano README.md
+python main.py --scan-id <SCAN_ID>
 ```
 
-2. **Copy and paste** the content above, save (`Ctrl+O`, `Enter`), and exit (`Ctrl+X`).
+---
 
-3. **Commit and push**:
+# 📄 Reporting
+
+Depending on the configured reporting components, VulnForge can generate structured reports from saved scan results.
+
+Example:
 
 ```bash
-git add README.md
-git commit -m "docs: add AI setup, comprehensive usage, and installation guide"
-git push origin main
+python main.py --report <SCAN_ID> --format html
 ```
 
+Markdown:
+
+```bash
+python main.py --report <SCAN_ID> --format md
+```
+
+PDF support depends on the project's installed reporting dependencies:
+
+```bash
+python main.py --report <SCAN_ID> --format pdf
+```
+
+Before relying on a particular format, verify that the corresponding reporting dependency is installed.
+
+---
+
+# 🤖 Optional AI Analysis
+
+VulnForge can optionally integrate with local AI tooling for analysis and report assistance.
+
+One supported approach is **Ollama**.
+
+Install Ollama from its official website and then pull a model:
+
+```bash
+ollama pull llama3.2
+```
+
+Verify:
+
+```bash
+ollama list
+```
+
+If your installed VulnForge CLI exposes the AI reporting options, use:
+
+```bash
+python main.py --report <SCAN_ID> \
+  --ai \
+  --ai-provider ollama \
+  --ai-model llama3.2 \
+  --format html
+```
+
+AI-generated text should be treated as assistance rather than authoritative security evidence. Findings should be manually verified before being reported.
+
+---
+
+# 🧪 Testing
+
+VulnForge includes tests for the template runtime and scanner execution.
+
+Run the runtime test from the repository root:
+
+```bash
+PYTHONPATH=. python tests/test_template_runtime.py
+```
+
+Run template execution testing:
+
+```bash
+PYTHONPATH=. python tests/test_template_execution.py
+```
+
+Run scanner runtime testing:
+
+```bash
+PYTHONPATH=. python tests/test_scanner_runtime.py
+```
+
+Validate all templates:
+
+```bash
+python tools/validate_templates.py
+```
+
+Compile the main runtime components:
+
+```bash
+python -m py_compile \
+  engine/scanner.py \
+  engine/template_runtime.py \
+  engine/template_validator.py
+```
+
+Current validation status:
+
+```text
+Template runtime       PASS
+Template execution     PASS
+Scanner runtime        PASS
+Template validation    45 valid / 0 invalid
+Python compilation     PASS
+```
+
+---
+
+# 🎯 Vulnerability Coverage
+
+The current template collection includes checks covering areas such as:
+
+### Authorization
+
+* BOLA
+* IDOR
+* UUID-based object authorization
+* Function-level authorization
+
+### Injection
+
+* SQL injection
+* Blind SQL injection
+* NoSQL injection
+* Command injection
+* SSTI
+
+### API Security
+
+* BOLA
+* Mass assignment
+* API authorization issues
+
+### Cross-Site Scripting
+
+* Reflected XSS
+* Stored XSS
+* DOM-oriented XSS
+
+### Authentication / Configuration
+
+* CSRF
+* JWT configuration issues
+* OAuth configuration issues
+* CORS
+
+### Server-Side Issues
+
+* SSRF
+* Path traversal
+
+### Information Exposure
+
+* Environment file exposure
+* Git exposure
+* Server information disclosure
+* Security-header checks
+
+### Other
+
+* GraphQL introspection
+* Open redirect
+* File upload checks
+* Business-logic testing
+
+Coverage is template-driven and therefore depends on the quality of the template, target behavior, and available application context. A template match is **not automatically proof of a confirmed vulnerability**.
+
+---
+
+# ⚙️ Proxy and Request Controls
+
+VulnForge supports configurable request behavior.
+
+Example proxy file:
+
+```text
+http://127.0.0.1:8080
+```
+
+Use:
+
+```bash
+python main.py -u https://example.com \
+  --proxy-file proxies.txt
+```
+
+Country-based proxy selection can be configured when the proxy file contains country metadata supported by the scanner.
+
+Request pacing can be controlled using:
+
+```bash
+--rate-limit
+--delay
+--jitter
+--timeout
+```
+
+These controls should be used to prevent unnecessary load on authorized targets.
+
+---
+
+# 🔐 Authentication
+
+VulnForge can operate with authentication information supplied through the CLI where supported by the current implementation.
+
+It also contains authentication helpers for supported registration/login workflows.
+
+Authentication behavior is application-dependent. VulnForge cannot automatically understand every application's custom authentication architecture.
+
+For applications requiring complex authentication flows, manually obtained credentials/session information may be necessary.
+
+---
+
+# 🧪 Recommended Test Environments
+
+For safe development and testing, use deliberately vulnerable applications such as:
+
+* OWASP Juice Shop
+* OWASP WebGoat
+* DVWA
+
+For example:
+
+```bash
+python main.py -u http://127.0.0.1:3000
+```
+
+when Juice Shop is running locally.
+
+Local vulnerable applications are preferable when developing new templates because they avoid accidentally testing unauthorized production systems.
+
+---
+
+# 🛠️ Development Workflow
+
+A typical workflow for adding a new vulnerability template is:
+
+```text
+1. Create YAML template
+        ↓
+2. Validate YAML structure
+        ↓
+3. Run template runtime tests
+        ↓
+4. Test against an authorized vulnerable target
+        ↓
+5. Review evidence
+        ↓
+6. Add/update documentation
+        ↓
+7. Commit changes
+```
+
+Validate templates with:
+
+```bash
+python tools/validate_templates.py
+```
+
+---
+
+# ⚠️ Limitations
+
+VulnForge is a template-driven security testing framework. It does **not** guarantee detection of every vulnerability.
+
+Detection quality depends on:
+
+* Template quality
+* Application architecture
+* Authentication state
+* Endpoint discovery
+* Response behavior
+* Request context
+* Server-side protections
+* Application-specific business logic
+
+A scanner finding should be manually reviewed before being treated as a confirmed security vulnerability.
+
+Similarly, the absence of a finding does not prove that a target is secure.
+
+---
+
+# 🛡️ Responsible Use
+
+VulnForge is intended for:
+
+* Authorized penetration testing
+* Bug bounty programs within their published scope
+* Security research on systems you own
+* Local vulnerable applications
+* Academic and educational security testing
+
+Do not use VulnForge against systems without authorization.
+
+The operator is responsible for complying with applicable laws, program rules, rate limits, and scope restrictions.
+
+---
+
+# 🤝 Contributing
+
+Contributions are welcome.
+
+Useful contributions include:
+
+* New vulnerability templates
+* Improved matchers
+* Better extractors
+* Runtime improvements
+* Test coverage
+* Documentation improvements
+* Bug fixes
+
+When submitting a new template, include:
+
+* Unique template ID
+* Vulnerability name
+* Severity
+* Request definition
+* Matchers
+* Extractors where required
+* Reproducible testing evidence
+
+---
+
+# 📜 License
+
+This project is licensed under the MIT License.
+
+See:
+
+```text
+LICENSE
+```
+
+for the complete license text.
+
+---
+
+# 👤 Project
+
+**VulnForge**
+
+GitHub:
+
+https://github.com/nisanbudhathoki21/VulnForge
+
+Developed as a security research and academic project.
+
+---
+
+## ⭐ Project Status
+
+Current repository validation:
+
+```text
+Scanner compilation       PASS
+Template runtime          PASS
+Template execution        PASS
+Scanner runtime           PASS
+Templates validated       45
+Invalid templates         0
+```
+
+VulnForge is actively being developed. Features and template coverage may change between releases.
+
+---
+
+**VulnForge — YAML-driven security testing, built for repeatable web application analysis.**
