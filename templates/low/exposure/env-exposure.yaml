@@ -1,13 +1,11 @@
-id: ENV-EXPOSURE-ADV-01
-name: Advanced Environment & Config File Exposure
+id: env-exposure-god
+name: Environment File Exposure – God Level
 severity: low
-category: information-disclosure
-metadata:
-  cwe: CWE-538
-  tags: ["env", "secrets", "config", "exposure"]
+impact: Leaked credentials, API keys, and database passwords can lead to full system compromise.
+chain: Combine leaked secrets with SSRF to pivot into internal networks.
 
 requests:
-  # Stage 1: Common Config File Paths
+  # 1. Common .env paths
   - method: GET
     path:
       - "{{BaseURL}}/.env"
@@ -15,52 +13,78 @@ requests:
       - "{{BaseURL}}/.env.local"
       - "{{BaseURL}}/.env.backup"
       - "{{BaseURL}}/.env.old"
-      - "{{BaseURL}}/.aws/credentials"
-      - "{{BaseURL}}/.aws/config"
-      - "{{BaseURL}}/config/application.properties"
-      - "{{BaseURL}}/WEB-INF/application.properties"
-      - "{{BaseURL}}/appsettings.json"
-      - "{{BaseURL}}/settings.py"
-      - "{{BaseURL}}/secret.yml"
-      - "{{BaseURL}}/secrets.json"
+      - "{{BaseURL}}/.env.staging"
+      - "{{BaseURL}}/.env.test"
     matchers:
       - type: status
-        status:
-          - 200
-          - 403                    # Sometimes 403 means the file exists but can't list
-
-  # Stage 2: Secret Extraction with Regex
-  - method: GET
-    path:
-      - "{{BaseURL}}/.env"
-      - "{{BaseURL}}/config.ini"
-    matchers:
-      - type: regex
-        regex:
-          - 'DATABASE_URL\s*=\s*[^\s]+'
-          - 'SECRET_KEY\s*=\s*[^\s]+'
-          - 'AWS_ACCESS_KEY_ID\s*=\s*[A-Z0-9]+'
-          - 'AWS_SECRET_ACCESS_KEY\s*=\s*[A-Za-z0-9\/+]+'
-          - 'STRIPE_API_KEY\s*=\s*sk_live_[A-Za-z0-9]+'
-          - 'JWT_SECRET\s*=\s*[A-Za-z0-9_-]+'
-          - 'GITHUB_TOKEN\s*=\s*[A-Za-z0-9_]+'
-          - 'MONGO_URI\s*=\s*mongodb://[^\s]+'
-          - 'REDIS_PASSWORD\s*=\s*[^\s]+'
-        part: body
-
-  # Stage 3: Actuator / Debug Exposures (Spring Boot / Flask debug)
-  - method: GET
-    path:
-      - "{{BaseURL}}/actuator/env"
-      - "{{BaseURL}}/actuator/configprops"
-      - "{{BaseURL}}/debug/vars"
-      - "{{BaseURL}}/phpinfo.php"
-      - "{{BaseURL}}/_status"
-    matchers:
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
       - type: word
-        words:
-          - "DB_PASSWORD"
-          - "JWT_SECRET"
-          - "spring.datasource"
-          - "SECRET_KEY"
         part: body
+        negative: true
+        words:
+          - "<html"
+          - "<!DOCTYPE"
+      - type: regex
+        part: body
+        regex:
+          - 'DB_(?:HOST|NAME|USER|PASSWORD|PORT|DATABASE)\s*[:=]\s*\S+'
+          - 'AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)\s*[:=]\s*\S+'
+          - 'SECRET(?:_KEY|_TOKEN)?\s*[:=]\s*\S+'
+          - 'API_KEY\s*[:=]\s*\S+'
+          - 'JWT_SECRET\s*[:=]\s*\S+'
+          - 'REDIS_(?:HOST|PASSWORD)\s*[:=]\s*\S+'
+          - 'MONGO_(?:URI|DB)\s*[:=]\s*\S+'
+          - 'SMTP_.+[:=]\s*\S+'
+    extractors:
+      - type: regex
+        name: leaked_secret
+        regex:
+          - '((?:DB_|AWS_|SECRET|API_KEY|JWT_SECRET|REDIS_|MONGO_|SMTP_).+\s*[:=]\s*[^\s]+)'
+
+  # 2. Alternative formats (JSON, properties)
+  - method: GET
+    path:
+      - "{{BaseURL}}/appsettings.json"
+      - "{{BaseURL}}/config/application.properties"
+      - "{{BaseURL}}/secrets.json"
+      - "{{BaseURL}}/credentials.json"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: regex
+        part: body
+        regex:
+          - '"password":\s*"[^"]+"'
+          - '"secret":\s*"[^"]+"'
+          - '"api_key":\s*"[^"]+"'
+
+verification:
+  # Confirm the file contains actual environment variables
+  - method: GET
+    path: "{{BaseURL}}/.env"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: regex
+        part: body
+        regex:
+          - '='  # must contain at least one '=' sign
+
+exploitation:
+  # Attempt to use a leaked secret to access an admin endpoint (example)
+  - method: GET
+    path: "{{BaseURL}}/api/admin"
+    headers:
+      Authorization: "Bearer {{leaked_secret}}"
+    extract:
+      type: status
+      expected: 200

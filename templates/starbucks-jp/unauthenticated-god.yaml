@@ -1,0 +1,63 @@
+id: starbucks-jp-unauthenticated-god
+name: Unauthenticated Exposure Detection
+severity: high
+
+description: >
+  Detects potentially sensitive HTTP endpoints that may be accessible
+  without authentication.
+
+requests:
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/me"
+      - "{{BaseURL}}/api/profile"
+      - "{{BaseURL}}/api/account"
+      - "{{BaseURL}}/api/users"
+      - "{{BaseURL}}/api/admin"
+      - "{{BaseURL}}/api/admin/users"
+
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"email"\s*:'
+          - '"username"\s*:'
+          - '"role"\s*:'
+          - '"user"\s*:'
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/swagger.json"
+      - "{{BaseURL}}/openapi.json"
+      - "{{BaseURL}}/api-docs"
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: word
+        part: body
+        words:
+          - "openapi"
+          - "swagger"
+          - "paths"
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/HEAD"
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/server-status"
+
+    matchers:
+      - type: status
+        status: 200
+
+  # DNS checks intentionally excluded.
+  # They belong in a separate DNS scanner.

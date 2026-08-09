@@ -1,0 +1,115 @@
+id: starbucks-jp-unauthenticated
+name: Starbucks Japan – Unauthenticated Endpoint Exposure
+severity: medium
+impact: Information disclosure, exposed admin interfaces, and potential source code leaks.
+chain: Combine with other vulnerabilities to gain deeper access.
+
+requests:
+  # ---------- Git Exposure ----------
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/HEAD"
+      - "{{BaseURL}}/.git/config"
+      - "{{BaseURL}}/.git/index"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: word
+        part: body
+        words:
+          - "ref: refs/heads/"
+          - "[core]"
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "<html"
+
+  # ---------- Environment Files ----------
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/appsettings.json"
+      - "{{BaseURL}}/config/application.properties"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: regex
+        part: body
+        regex:
+          - 'DB_|SECRET|AWS_|PASSWORD|TOKEN|API_KEY'
+
+  # ---------- Admin / Debug Endpoints ----------
+  - method: GET
+    path:
+      - "{{BaseURL}}/sidekiq/busy"
+      - "{{BaseURL}}/sidekiq/queues"
+      - "{{BaseURL}}/actuator/health"
+      - "{{BaseURL}}/swagger.json"
+      - "{{BaseURL}}/api-docs"
+      - "{{BaseURL}}/phpinfo.php"
+      - "{{BaseURL}}/server-status"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "Sidekiq"
+          - "Actuator"
+          - "Swagger"
+          - "phpinfo"
+
+  # ---------- GraphQL Introspection ----------
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+    headers:
+      Content-Type: application/json
+    body: |
+      {"query": "query { __schema { types { name } } }"}
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "__schema"
+          - "queryType"
+
+  # ---------- CORS Misconfiguration ----------
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    headers:
+      Origin: "https://evil.com"
+    matchers:
+      - type: header
+        name: Access-Control-Allow-Origin
+        value: "*"
+      - type: header
+        name: Access-Control-Allow-Credentials
+        value: "true"
+
+  # ---------- Security Headers ----------
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: header
+        name: Content-Security-Policy
+        negative: true
+      - type: header
+        name: X-Frame-Options
+        negative: true
+      - type: header
+        name: Strict-Transport-Security
+        negative: true

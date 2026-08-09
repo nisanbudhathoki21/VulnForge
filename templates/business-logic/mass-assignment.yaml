@@ -1,0 +1,40 @@
+id: mass-assignment
+name: Mass Assignment Detection
+severity: high
+
+description: >
+  Detects APIs that may bind client-controlled fields that should normally
+  be server-controlled.
+
+requests:
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/register"
+      - "{{BaseURL}}/api/users"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {
+        "email": "vulnforge-test@example.invalid",
+        "password": "VulnForge-Test-Only",
+        "name": "VulnForge Test",
+        "is_admin": false
+      }
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"is_admin"\s*:\s*(true|false)'
+          - '"role"\s*:'
+
+    verification:
+      - type: field_reflection
+        field: is_admin

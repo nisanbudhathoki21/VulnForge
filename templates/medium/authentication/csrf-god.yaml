@@ -1,0 +1,68 @@
+id: csrf-god
+name: CSRF – God Level (Token Absence + Form Detection)
+severity: medium
+impact: Attacker can perform state‑changing actions on behalf of the user.
+chain: Combine with BOLA to modify other users' data.
+
+requests:
+  # 1. Check for forms without CSRF tokens
+  - method: GET
+    path:
+      - "{{BaseURL}}/profile"
+      - "{{BaseURL}}/settings"
+      - "{{BaseURL}}/account"
+      - "{{BaseURL}}/change-password"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        negative: true
+        words:
+          - 'csrf_token'
+          - 'authenticity_token'
+          - 'csrfmiddlewaretoken'
+          - "<html"
+          - "OpsTools"
+      - type: word
+        part: body
+        words:
+          - '<form'
+          - 'method="POST"'
+    matchers-condition: and
+
+  # 2. Check SameSite cookie attribute
+  - method: GET
+    path:
+      - "{{BaseURL}}/"
+    matchers:
+      - type: header
+        name: Set-Cookie
+        regex: 'SameSite'
+        negative: true
+
+verification:
+  # Confirm that a POST request to the form action succeeds without token
+  - method: POST
+    path: "{{BaseURL}}/profile/update"
+    headers:
+      Content-Type: application/x-www-form-urlencoded
+    body: |
+      email=attacker@evil.com&name=evil
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "updated"
+          - "success"
+
+exploitation:
+  # Craft a CSRF PoC (simulate a malicious site)
+  - method: GET
+    path: "{{BaseURL}}/profile"
+    extract:
+      type: header
+      name: Location
+      value: "csrf_poc.html"
