@@ -427,11 +427,25 @@ def print_findings(findings):
             {}
         ) or {}
 
+        confirmed = bool(finding.get("confirmed"))
+
+        confidence = finding.get("confidence", 0.0) or 0.0
+
+        # Never let an unconfirmed / low-confidence finding print as
+        # a flat, unqualified [CRITICAL] - that's exactly what made
+        # the Agoda false positives look like real confirmed bugs.
+        status_tag = (
+            f"{Fore.GREEN}CONFIRMED{Style.RESET_ALL}"
+            if confirmed
+            else f"{Fore.YELLOW}UNCONFIRMED{Style.RESET_ALL}"
+        )
+
         print(
             f"\n  {color}"
             f"[{severity}]"
             f"{Style.RESET_ALL} "
-            f"{index}. {name}"
+            f"{index}. {name}  "
+            f"({status_tag}, confidence={confidence:.2f})"
         )
 
         method = evidence.get(
@@ -456,6 +470,13 @@ def print_findings(findings):
         print(
             f"      Status: {status}"
         )
+
+        if not confirmed:
+            print(
+                f"      {Fore.YELLOW}⚠ Verification stage did not "
+                f"independently reproduce this - treat as a lead, "
+                f"not a confirmed vulnerability.{Style.RESET_ALL}"
+            )
 
 
 def print_summary(result, elapsed):
@@ -820,6 +841,42 @@ def build_parser():
         help="Show saved scan"
     )
 
+    parser.add_argument(
+        "--dashboard",
+        action="store_true",
+        help="Generate an HTML dashboard from stored scan/finding data"
+    )
+
+    parser.add_argument(
+        "--dashboard-output",
+        default="vulnforge_dashboard.html",
+        help="Output path for --dashboard (default: vulnforge_dashboard.html)"
+    )
+
+    parser.add_argument(
+        "--no-auto-dashboard",
+        action="store_true",
+        help="Disable automatic dashboard refresh after a scan"
+    )
+
+    parser.add_argument(
+        "--pdf",
+        action="store_true",
+        help="Generate a PDF report from stored scan data. "
+             "Use with --scan-id for a full report, or --scan-id "
+             "and --finding-id for a single-finding report."
+    )
+
+    parser.add_argument(
+        "--finding-id",
+        help="Restrict --pdf to a single finding ID (requires --scan-id)"
+    )
+
+    parser.add_argument(
+        "--pdf-output",
+        help="Output path for --pdf (default: auto-generated filename)"
+    )
+
     # --------------------------------------------------------
     # OUTPUT
     # --------------------------------------------------------
@@ -900,9 +957,61 @@ def main():
         show_history()
         return
 
+    if args.scan_id and args.pdf:
+
+        from report.pdf_report import generate_full_report_pdf, generate_finding_pdf
+
+        try:
+            if args.finding_id:
+                path = generate_finding_pdf(
+                    args.scan_id, args.finding_id, args.pdf_output
+                )
+            else:
+                path = generate_full_report_pdf(
+                    args.scan_id, args.pdf_output
+                )
+
+            print(
+                f"{Fore.GREEN}"
+                f"[PDF] Report written to {path}"
+                f"{Style.RESET_ALL}"
+            )
+
+        except ValueError as e:
+
+            print(
+                f"{Fore.RED}"
+                f"[PDF ERROR] {e}"
+                f"{Style.RESET_ALL}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"{Fore.RED}"
+                f"[PDF ERROR] Report generation failed: {e}"
+                f"{Style.RESET_ALL}"
+            )
+
+        return
+
     if args.scan_id:
 
         show_scan(args.scan_id)
+        return
+
+    if args.dashboard:
+
+        from terminal.dashboard import generate_dashboard
+
+        path = generate_dashboard(args.dashboard_output)
+
+        print(
+            f"{Fore.GREEN}"
+            f"[DASHBOARD] Written to {path}"
+            f"{Style.RESET_ALL}"
+        )
+
         return
 
     # --------------------------------------------------------
@@ -1172,6 +1281,35 @@ def main():
     print(
         f"DB Saved    : {saved_count}/{len(results)}"
     )
+
+    # --------------------------------------------------------
+    # AUTO DASHBOARD REFRESH
+    # --------------------------------------------------------
+    # Every scan already writes to SQLite via persist_scan(); this
+    # just means you never have to separately run `--dashboard`
+    # afterwards - the HTML file is always in sync with the DB.
+
+    if not args.no_auto_dashboard:
+
+        try:
+
+            from terminal.dashboard import generate_dashboard
+
+            dash_path = generate_dashboard(args.dashboard_output)
+
+            print(
+                f"{Fore.GREEN}"
+                f"[DASHBOARD] Refreshed: {dash_path}"
+                f"{Style.RESET_ALL}"
+            )
+
+        except Exception as e:
+
+            print(
+                f"{Fore.YELLOW}"
+                f"[DASHBOARD] Could not refresh dashboard: {e}"
+                f"{Style.RESET_ALL}"
+            )
 
     # --------------------------------------------------------
     # OUTPUT

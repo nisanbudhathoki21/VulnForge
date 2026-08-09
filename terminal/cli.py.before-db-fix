@@ -1,0 +1,1923 @@
+#!/usr/bin/env python3
+"""
+VulnForge CLI
+
+CLI/orchestration layer for VulnForge.
+
+Architecture:
+    main.py
+        |
+        v
+    terminal/cli.py
+        |
+        +--> core.fingerprint
+        |
+        +--> engine.scanner  <-- canonical scanner
+        |
+        +--> storage/database
+        |
+        +--> output
+
+The CLI does NOT implement scanning logic.
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import os
+import signal
+import sys
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any, Dict, List, Optional
+
+try:
+    from colorama import Fore, Style, init as colorama_init
+
+    colorama_init(autoreset=True)
+except ImportError:
+
+    class _Empty:
+        RED = ""
+        GREEN = ""
+        YELLOW = ""
+        BLUE = ""
+        CYAN = ""
+        MAGENTA = ""
+        WHITE = ""
+        RESET_ALL = ""
+
+    Fore = Style = _Empty()
+
+
+# ============================================================
+# PROJECT IMPORTS
+# ============================================================
+
+try:
+    from engine.scanner import Scanner
+except ImportError as exc:
+    print(
+        f"{Fore.RED}[ERROR] Unable to import engine.scanner: {exc}{Style.RESET_ALL}",
+        file=sys.stderr,
+    )
+    raise
+
+
+# Optional fingerprint module.
+try:
+    from core.fingerprint import fingerprint_target
+except ImportError:
+
+    def fingerprint_target(
+        url: str,
+        quiet: bool = False,
+    ) -> Dict[str, Any]:
+        return {}
+
+
+# Optional database module.
+#
+# The CLI remains usable if the database implementation is
+# unavailable. Persistence simply becomes disabled.
+try:
+    from storage.database import (
+        init_db,
+        persist_scan,
+        get_scans,
+        get_scan,
+    )
+except ImportError:
+
+    def init_db() -> None:
+        return None
+
+    def persist_scan(result: Dict[str, Any]) -> bool:
+        return False
+
+    def get_scans(limit: int = 20) -> List[Dict[str, Any]]:
+        return []
+
+    def get_scan(scan_id: str) -> Optional[Dict[str, Any]]:
+        return None
+
+
+# ============================================================
+# GLOBAL STATE
+# ============================================================
+
+STOP_EVENT = __import__("threading").Event()
+
+
+# ============================================================
+# TIME HELPERS
+# ============================================================
+
+def now() -> str:
+    """Return an ISO-8601 UTC timestamp."""
+    return datetime.now(timezone.utc).isoformat()
+
+
+# ============================================================
+# SIGNAL HANDLING
+# ============================================================
+
+def _handle_signal(signum: int, frame: Any) -> None:
+    """Gracefully request scan cancellation."""
+
+    if STOP_EVENT.is_set():
+        print(
+            f"\n{Fore.RED}Forced exit.{Style.RESET_ALL}"
+        )
+        raise KeyboardInterrupt
+
+    STOP_EVENT.set()
+
+    print(
+        f"\n{Fore.YELLOW}"
+        "Cancellation requested. Waiting for active work..."
+        f"{Style.RESET_ALL}"
+    )
+
+
+def install_signal_handlers() -> None:
+    """Install Ctrl-C / termination handlers."""
+
+    try:
+        signal.signal(
+            signal.SIGINT,
+            _handle_signal,
+        )
+    except Exception:
+        pass
+
+    try:
+        signal.signal(
+            signal.SIGTERM,
+            _handle_signal,
+        )
+    except Exception:
+        pass
+
+
+# ============================================================
+# BANNER
+# ============================================================
+
+BANNER = r"""
+██╗   ██╗██╗   ██╗██╗     ███╗   ██╗███████╗ ██████╗ ██████╗  ██████╗ ███████╗
+██║   ██║██║   ██║██║     ████╗  ██║██╔════╝██╔═══██╗██╔══██╗██╔════╝ ██╔════╝
+██║   ██║██║   ██║██║     ██╔██╗ ██║█████╗  ██║   ██║██████╔╝██║  ███╗█████╗
+╚██╗ ██╔╝██║   ██║██║     ██║╚██╗██║██╔══╝  ██║   ██║██╔══██╗██║   ██║██╔══╝
+╚████╔╝ ╚██████╔╝███████╗██║ ╚████║██║     ╚██████╔╝██║  ██║╚██████╔╝███████╗
+╚═══╝   ╚═════╝ ╚══════╝╚═╝  ╚═══╝╚═╝      ╚═════╝ ╚═╝  ╚═╝ ╚══════╝
+"""
+
+
+def print_banner() -> None:
+    print(Fore.CYAN + BANNER)
+    print(
+        f"{Fore.CYAN}VulnForge v1.0{Style.RESET_ALL}"
+    )
+    print(
+        f"{Fore.WHITE}"
+        "Web Vulnerability Scanner"
+        f"{Style.RESET_ALL}"
+    )
+    print(
+        f"{Fore.WHITE}"
+        "Templates • Fingerprinting • Verification • SQLite • Reports"
+        f"{Style.RESET_ALL}"
+    )
+    print()
+
+
+# ============================================================
+# ARGUMENT PARSER
+# ============================================================
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="VulnForge Web Vulnerability Scanner"
+    )
+
+    target_group = parser.add_mutually_exclusive_group()
+
+    target_group.add_argument(
+        "-u",
+        "--url",
+        help="Target URL",
+    )
+
+    target_group.add_argument(
+        "-l",
+        "--list",
+        help="File containing target URLs",
+    )
+
+    parser.add_argument(
+        "-t",
+        "--threads",
+        type=int,
+        default=5,
+        help="Worker threads (default: 5)",
+    )
+
+    parser.add_argument(
+        "-T",
+        "--templates",
+        default="templates",
+        help="Template directory",
+    )
+
+    parser.add_argument(
+        "--timeout",
+        type=int,
+        default=10,
+        help="HTTP timeout (default: 10)",
+    )
+
+    parser.add_argument(
+        "--rate-limit",
+        type=float,
+        default=0,
+        help="Requests per second",
+    )
+
+    parser.add_argument(
+        "--delay",
+        type=float,
+        default=0,
+        help="Delay between requests",
+    )
+
+    parser.add_argument(
+        "--jitter",
+        type=float,
+        default=0,
+        help="Random additional request delay",
+    )
+
+    parser.add_argument(
+        "--exploit",
+        action="store_true",
+        help="Enable conservative exploit verification",
+    )
+
+    parser.add_argument(
+        "--full",
+        action="store_true",
+        help="Show full request/response details when supported",
+    )
+
+    parser.add_argument(
+        "--no-proxy",
+        action="store_true",
+        help="Disable proxy",
+    )
+
+    parser.add_argument(
+        "--proxy-file",
+        help="Proxy file",
+    )
+
+    parser.add_argument(
+        "--country",
+        help="Preferred proxy country",
+    )
+
+    parser.add_argument(
+        "--no-priv",
+        action="store_true",
+        help="Skip privilege tests",
+    )
+
+    parser.add_argument(
+        "--no-auth",
+        action="store_true",
+        help="Skip authentication tests",
+    )
+
+    parser.add_argument(
+        "--no-fingerprint",
+        action="store_true",
+        help="Skip fingerprinting",
+    )
+
+    parser.add_argument(
+        "--username",
+        help="Authentication username",
+    )
+
+    parser.add_argument(
+        "--password",
+        help="Authentication password",
+    )
+
+    parser.add_argument(
+        "--history",
+        action="store_true",
+        help="Show scan history",
+    )
+
+    parser.add_argument(
+        "--scan-id",
+        help="Show saved scan details",
+    )
+
+    parser.add_argument(
+        "-o",
+        "--output",
+        help="Save JSON output to file",
+    )
+
+    parser.add_argument(
+        "--csv",
+        dest="csv",
+        help="Save findings to CSV",
+    )
+
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print JSON output",
+    )
+
+    parser.add_argument(
+        "--ai",
+        action="store_true",
+        help="Enable Ollama AI reporting",
+    )
+
+    parser.add_argument(
+        "--ai-model",
+        default="qwen3",
+        help="Ollama model",
+    )
+
+    parser.add_argument(
+        "--ai-url",
+        default="http://127.0.0.1:11434",
+        help="Ollama URL",
+    )
+
+    parser.add_argument(
+        "-q",
+        "--quiet",
+        action="store_true",
+        help="Quiet mode",
+    )
+
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Enable debug output",
+    )
+
+    return parser
+
+
+# ============================================================
+# TARGET LOADING
+# ============================================================
+
+def load_targets(
+    args: argparse.Namespace,
+) -> List[str]:
+    """Resolve CLI target arguments into a target list."""
+
+    targets: List[str] = []
+
+    if args.url:
+        targets.append(args.url.strip())
+
+    if args.list:
+        path = Path(args.list)
+
+        if not path.exists():
+            raise FileNotFoundError(
+                f"Target list not found: {path}"
+            )
+
+        for line in path.read_text(
+            encoding="utf-8"
+        ).splitlines():
+
+            line = line.strip()
+
+            if not line:
+                continue
+
+            if line.startswith("#"):
+                continue
+
+            targets.append(line)
+
+    # Remove duplicates while preserving order.
+    unique: List[str] = []
+    seen = set()
+
+    for target in targets:
+
+        if target in seen:
+            continue
+
+        seen.add(target)
+        unique.append(target)
+
+    return unique
+
+
+# ============================================================
+# URL NORMALIZATION
+# ============================================================
+
+def normalize_target(url: str) -> str:
+    """Normalize a target URL."""
+
+    value = str(url).strip()
+
+    if not value:
+        return value
+
+    if not value.startswith(
+        (
+            "http://",
+            "https://",
+        )
+    ):
+        value = "https://" + value
+
+    return value.rstrip("/")
+
+
+# ============================================================
+# SCANNER ADAPTER
+# ============================================================
+
+def scan_target(
+    target: str,
+    *,
+    quiet: bool = True,
+    template_dir: str = "templates",
+    max_workers: int = 5,
+    proxy_file: Optional[str] = None,
+    country: Optional[str] = None,
+    rate_limit: float = 0,
+    delay: float = 0,
+    jitter: float = 0,
+    exploit: bool = False,
+    full: bool = False,
+    username: Optional[str] = None,
+    password: Optional[str] = None,
+    timeout: int = 10,
+    skip_priv: bool = False,
+    skip_auth: bool = False,
+    no_fingerprint: bool = False,
+) -> Dict[str, Any]:
+    """
+    Single CLI adapter around the canonical Scanner.
+
+    IMPORTANT:
+        There is no second scanner implementation here.
+
+        terminal/cli.py -> engine.scanner.Scanner
+    """
+
+    target = normalize_target(target)
+
+    scanner = Scanner(
+        url=target,
+        quiet=quiet,
+        template_dir=template_dir,
+        max_workers=max_workers,
+        proxy_file=proxy_file,
+        country=country,
+        rate_limit=rate_limit,
+        delay=delay,
+        jitter=jitter,
+        exploit=exploit,
+        username=username,
+        password=password,
+        timeout=timeout,
+        skip_priv=skip_priv,
+        skip_auth=skip_auth,
+        no_fingerprint=no_fingerprint,
+    )
+
+    result = scanner.scan()
+
+    if hasattr(result, "to_dict"):
+        data = result.to_dict()
+    elif isinstance(result, dict):
+        data = dict(result)
+    else:
+        data = {}
+
+    # Preserve useful scanner metadata.
+    data.setdefault(
+        "scan_id",
+        getattr(
+            scanner,
+            "scan_id",
+            None,
+        ),
+    )
+
+    data.setdefault(
+        "target",
+        target,
+    )
+
+    data.setdefault(
+        "url",
+        target,
+    )
+
+    data.setdefault(
+        "findings",
+        [],
+    )
+
+    data.setdefault(
+        "request_count",
+        getattr(
+            scanner,
+            "requests_sent",
+            0,
+        ),
+    )
+
+    data.setdefault(
+        "error_count",
+        getattr(
+            scanner,
+            "errors_count",
+            0,
+        ),
+    )
+
+    data.setdefault(
+        "fingerprint",
+        getattr(
+            scanner,
+            "fingerprint_data",
+            {},
+        ),
+    )
+
+    data["full"] = full
+
+    return data
+
+
+# ============================================================
+# FINGERPRINT
+# ============================================================
+
+def run_fingerprint(
+    target: str,
+    *,
+    quiet: bool = False,
+) -> Dict[str, Any]:
+    """Run the project's fingerprint module."""
+
+    try:
+
+        result = fingerprint_target(
+            target,
+            quiet=quiet,
+        )
+
+        if isinstance(result, dict):
+            return result
+
+        return {}
+
+    except Exception as exc:
+
+        if not quiet:
+            print(
+                f"{Fore.YELLOW}"
+                f"[WARN] Fingerprint failed: {exc}"
+                f"{Style.RESET_ALL}"
+            )
+
+        return {
+            "error": str(exc)
+        }
+
+
+# ============================================================
+# SINGLE TARGET
+# ============================================================
+
+def scan_one_target(
+    target: str,
+    args: argparse.Namespace,
+) -> Dict[str, Any]:
+    """Scan one target and persist the result."""
+
+    target = normalize_target(target)
+
+    result: Dict[str, Any] = {
+        "url": target,
+        "target": target,
+        "scan_id": None,
+        "start_time": now(),
+        "end_time": None,
+        "findings": [],
+        "fingerprint": {},
+        "database_saved": False,
+        "error": None,
+    }
+
+    started = time.monotonic()
+
+    try:
+
+        # ----------------------------------------------------
+        # FINGERPRINT
+        # ----------------------------------------------------
+
+        if not args.no_fingerprint:
+
+            if not args.quiet:
+                print(
+                    f"{Fore.BLUE}"
+                    f"[FINGERPRINT]"
+                    f"{Style.RESET_ALL} "
+                    f"{target}"
+                )
+
+            result["fingerprint"] = run_fingerprint(
+                target,
+                quiet=True,
+            )
+
+        # ----------------------------------------------------
+        # STOP CHECK
+        # ----------------------------------------------------
+
+        if STOP_EVENT.is_set():
+
+            result["error"] = "Scan cancelled"
+            return result
+
+        # ----------------------------------------------------
+        # SCANNER
+        # ----------------------------------------------------
+
+        scan_result = scan_target(
+            target,
+            quiet=True,
+            template_dir=args.templates,
+            max_workers=max(
+                1,
+                min(
+                    args.threads,
+                    20,
+                ),
+            ),
+            proxy_file=(
+                args.proxy_file
+                if args.proxy_file
+                and not args.no_proxy
+                else None
+            ),
+            country=args.country,
+            rate_limit=args.rate_limit,
+            delay=args.delay,
+            jitter=args.jitter,
+            exploit=args.exploit,
+            full=args.full,
+            username=args.username,
+            password=args.password,
+            timeout=args.timeout,
+            skip_priv=args.no_priv,
+            skip_auth=args.no_auth,
+            no_fingerprint=True,
+        )
+
+        if not isinstance(
+            scan_result,
+            dict,
+        ):
+            scan_result = {}
+
+        # ----------------------------------------------------
+        # MERGE SCANNER RESULT
+        # ----------------------------------------------------
+
+        for key, value in scan_result.items():
+
+            if key == "fingerprint" and result.get(
+                "fingerprint"
+            ):
+                continue
+
+            result[key] = value
+
+        result["scan_id"] = scan_result.get(
+            "scan_id"
+        )
+
+        result["findings"] = (
+            scan_result.get(
+                "findings",
+                [],
+            )
+            or []
+        )
+
+        result["request_count"] = scan_result.get(
+            "request_count",
+            0,
+        )
+
+        result["error_count"] = scan_result.get(
+            "error_count",
+            0,
+        )
+
+        result["end_time"] = now()
+
+        # ----------------------------------------------------
+        # SQLITE
+        # ----------------------------------------------------
+
+        try:
+
+            init_db()
+
+            saved = persist_scan(
+                result
+            )
+
+            result["database_saved"] = bool(
+                saved
+            )
+
+        except Exception as exc:
+
+            result["database_saved"] = False
+
+            if args.debug:
+                print(
+                    f"{Fore.YELLOW}"
+                    f"[DEBUG] Database error: {exc}"
+                    f"{Style.RESET_ALL}"
+                )
+
+    except KeyboardInterrupt:
+
+        result["error"] = "Interrupted by user"
+
+    except Exception as exc:
+
+        result["error"] = str(exc)
+
+        if args.debug:
+            import traceback
+
+            traceback.print_exc()
+
+    finally:
+
+        if not result.get("end_time"):
+            result["end_time"] = now()
+
+        result["duration"] = (
+            time.monotonic()
+            - started
+        )
+
+    return result
+
+
+# ============================================================
+# SEVERITY
+# ============================================================
+
+def severity_color(
+    severity: str,
+) -> str:
+    value = str(
+        severity
+    ).lower()
+
+    if value == "critical":
+        return Fore.RED
+
+    if value == "high":
+        return Fore.RED
+
+    if value == "medium":
+        return Fore.YELLOW
+
+    if value == "low":
+        return Fore.CYAN
+
+    return Fore.WHITE
+
+
+# ============================================================
+# FINDING HELPERS
+# ============================================================
+
+def finding_name(
+    finding: Dict[str, Any],
+) -> str:
+
+    return str(
+        finding.get(
+            "name",
+            finding.get(
+                "title",
+                finding.get(
+                    "template_name",
+                    finding.get(
+                        "template_id",
+                        "Unnamed finding",
+                    ),
+                ),
+            ),
+        )
+    )
+
+
+def finding_severity(
+    finding: Dict[str, Any],
+) -> str:
+
+    return str(
+        finding.get(
+            "severity",
+            "informational",
+        )
+    ).upper()
+
+
+def finding_evidence(
+    finding: Dict[str, Any],
+) -> Dict[str, Any]:
+
+    evidence = finding.get(
+        "evidence",
+        {},
+    )
+
+    if isinstance(
+        evidence,
+        dict,
+    ):
+        return evidence
+
+    return {}
+
+
+# ============================================================
+# PRINT FINGERPRINT
+# ============================================================
+
+def print_fingerprint(
+    fp: Optional[Dict[str, Any]],
+) -> None:
+
+    if not fp:
+        return
+
+    print(
+        f"\n{Fore.CYAN}"
+        "Fingerprint"
+        f"{Style.RESET_ALL}"
+    )
+
+    server = fp.get(
+        "server",
+        "Unknown",
+    )
+
+    os_name = fp.get(
+        "os",
+        "Unknown",
+    )
+
+    rating = fp.get(
+        "security_rating",
+        fp.get(
+            "rating",
+            "N/A",
+        ),
+    )
+
+    print(
+        f"  Server : {server}"
+    )
+
+    print(
+        f"  OS     : {os_name}"
+    )
+
+    print(
+        f"  Rating : {rating}"
+    )
+
+    libraries = fp.get(
+        "libraries"
+    )
+
+    if libraries:
+
+        if isinstance(
+            libraries,
+            list,
+        ):
+            libraries = ", ".join(
+                map(
+                    str,
+                    libraries,
+                )
+            )
+
+        print(
+            f"  Libraries : {libraries}"
+        )
+
+    technologies = fp.get(
+        "technologies"
+    )
+
+    if technologies:
+
+        if isinstance(
+            technologies,
+            list,
+        ):
+            technologies = ", ".join(
+                map(
+                    str,
+                    technologies,
+                )
+            )
+
+        print(
+            f"  Technologies : {technologies}"
+        )
+
+
+# ============================================================
+# PRINT FINDINGS
+# ============================================================
+
+def print_findings(
+    findings: List[Dict[str, Any]],
+) -> None:
+
+    if not findings:
+
+        print(
+            f"\n{Fore.GREEN}"
+            "✓ No verified findings"
+            f"{Style.RESET_ALL}"
+        )
+
+        return
+
+    print(
+        f"\n{Fore.YELLOW}"
+        f"Findings: {len(findings)}"
+        f"{Style.RESET_ALL}"
+    )
+
+    for index, finding in enumerate(
+        findings,
+        1,
+    ):
+
+        severity = finding_severity(
+            finding
+        )
+
+        color = severity_color(
+            severity
+        )
+
+        name = finding_name(
+            finding
+        )
+
+        evidence = finding_evidence(
+            finding
+        )
+
+        print(
+            f"\n  {color}"
+            f"[{severity}]"
+            f"{Style.RESET_ALL} "
+            f"{index}. {name}"
+        )
+
+        method = evidence.get(
+            "method",
+            finding.get(
+                "method",
+                "?",
+            ),
+        )
+
+        url = evidence.get(
+            "url",
+            finding.get(
+                "url",
+                "",
+            ),
+        )
+
+        status = evidence.get(
+            "status",
+            evidence.get(
+                "status_code",
+                finding.get(
+                    "status_code",
+                    "N/A",
+                ),
+            ),
+        )
+
+        print(
+            f"      {method} {url}"
+        )
+
+        print(
+            f"      Status: {status}"
+        )
+
+        kind = finding.get(
+            "kind"
+        )
+
+        confidence = finding.get(
+            "confidence"
+        )
+
+        if kind:
+            print(
+                f"      Kind: {kind}"
+            )
+
+        if confidence is not None:
+            print(
+                f"      Confidence: {confidence}"
+            )
+
+
+# ============================================================
+# SUMMARY
+# ============================================================
+
+def print_summary(
+    result: Dict[str, Any],
+    elapsed: Optional[float] = None,
+) -> None:
+
+    findings = result.get(
+        "findings",
+        [],
+    ) or []
+
+    if elapsed is None:
+        elapsed = result.get(
+            "duration",
+            0,
+        )
+
+    print(
+        f"\n{Fore.CYAN}"
+        "╭──────────────────────────────────────────────╮"
+        f"{Style.RESET_ALL}"
+    )
+
+    print(
+        f"{Fore.CYAN}"
+        "│                 SUMMARY                      │"
+        f"{Style.RESET_ALL}"
+    )
+
+    print(
+        f"{Fore.CYAN}"
+        "╰──────────────────────────────────────────────╯"
+        f"{Style.RESET_ALL}"
+    )
+
+    print(
+        f"Target      : "
+        f"{result.get('url', result.get('target', 'N/A'))}"
+    )
+
+    print(
+        f"Duration    : "
+        f"{float(elapsed or 0):.2f}s"
+    )
+
+    print(
+        f"Findings    : "
+        f"{len(findings)}"
+    )
+
+    request_count = result.get(
+        "request_count",
+        result.get(
+            "requests_sent",
+            0,
+        ),
+    )
+
+    error_count = result.get(
+        "error_count",
+        result.get(
+            "errors_count",
+            0,
+        ),
+    )
+
+    print(
+        f"Requests    : "
+        f"{request_count}"
+    )
+
+    print(
+        f"Errors      : "
+        f"{error_count}"
+    )
+
+    templates_loaded = result.get(
+        "templates_loaded"
+    )
+
+    templates_executed = result.get(
+        "templates_executed"
+    )
+
+    if templates_loaded is not None:
+        print(
+            f"Templates   : "
+            f"{templates_loaded}"
+        )
+
+    if templates_executed is not None:
+        print(
+            f"Executed    : "
+            f"{templates_executed}"
+        )
+
+    if result.get(
+        "scan_id"
+    ):
+
+        print(
+            f"Scan ID     : "
+            f"{result['scan_id']}"
+        )
+
+    if result.get(
+        "database_saved"
+    ):
+
+        print(
+            f"{Fore.GREEN}"
+            "DB Saved    : YES"
+            f"{Style.RESET_ALL}"
+        )
+
+    elif result.get(
+        "scan_id"
+    ):
+
+        print(
+            f"{Fore.YELLOW}"
+            "DB Saved    : NO"
+            f"{Style.RESET_ALL}"
+        )
+
+    if result.get(
+        "error"
+    ):
+
+        print(
+            f"{Fore.RED}"
+            f"Error       : {result['error']}"
+            f"{Style.RESET_ALL}"
+        )
+
+    print()
+
+
+# ============================================================
+# HISTORY
+# ============================================================
+
+def show_history() -> None:
+
+    try:
+        init_db()
+        scans = get_scans(20)
+    except Exception as exc:
+        print(
+            f"{Fore.RED}"
+            f"Unable to read history: {exc}"
+            f"{Style.RESET_ALL}"
+        )
+        return
+
+    print(
+        f"\n{Fore.CYAN}"
+        "VulnForge Scan History"
+        f"{Style.RESET_ALL}\n"
+    )
+
+    if not scans:
+
+        print(
+            f"{Fore.YELLOW}"
+            "No scans found."
+            f"{Style.RESET_ALL}"
+        )
+
+        return
+
+    for scan_item in scans:
+
+        print(
+            f"{Fore.GREEN}"
+            f"{scan_item.get('scan_id', 'N/A')}"
+            f"{Style.RESET_ALL}"
+        )
+
+        print(
+            f"  Target   : "
+            f"{scan_item.get('target', 'N/A')}"
+        )
+
+        print(
+            f"  Findings : "
+            f"{scan_item.get('findings_count', 0)}"
+        )
+
+        print(
+            f"  Time     : "
+            f"{scan_item.get('timestamp', 'N/A')}"
+        )
+
+        print()
+
+
+# ============================================================
+# SCAN DETAILS
+# ============================================================
+
+def show_scan(
+    scan_id: str,
+) -> None:
+
+    try:
+        init_db()
+        scan_item = get_scan(
+            scan_id
+        )
+    except Exception as exc:
+        print(
+            f"{Fore.RED}"
+            f"Unable to read scan: {exc}"
+            f"{Style.RESET_ALL}"
+        )
+        return
+
+    if not scan_item:
+
+        print(
+            f"{Fore.RED}"
+            f"Scan '{scan_id}' not found."
+            f"{Style.RESET_ALL}"
+        )
+
+        return
+
+    print(
+        json.dumps(
+            scan_item,
+            indent=2,
+            default=str,
+        )
+    )
+
+
+# ============================================================
+# JSON OUTPUT
+# ============================================================
+
+def save_json(
+    results: Any,
+    path: str,
+) -> None:
+
+    output_path = Path(path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    with output_path.open(
+        "w",
+        encoding="utf-8",
+    ) as handle:
+
+        json.dump(
+            results,
+            handle,
+            indent=2,
+            default=str,
+        )
+
+    print(
+        f"{Fore.GREEN}"
+        f"[+] JSON saved: {output_path}"
+        f"{Style.RESET_ALL}"
+    )
+
+
+# ============================================================
+# CSV OUTPUT
+# ============================================================
+
+def save_csv(
+    results: List[Dict[str, Any]],
+    path: str,
+) -> None:
+
+    output_path = Path(path)
+
+    output_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    rows: List[Dict[str, Any]] = []
+
+    for result in results:
+
+        target = result.get(
+            "url",
+            result.get(
+                "target",
+                "",
+            ),
+        )
+
+        findings = result.get(
+            "findings",
+            [],
+        ) or []
+
+        if not findings:
+
+            rows.append(
+                {
+                    "target": target,
+                    "scan_id": result.get(
+                        "scan_id",
+                        "",
+                    ),
+                    "severity": "",
+                    "name": "",
+                    "kind": "",
+                    "confidence": "",
+                    "method": "",
+                    "url": "",
+                    "status": "",
+                }
+            )
+
+            continue
+
+        for finding in findings:
+
+            evidence = finding_evidence(
+                finding
+            )
+
+            rows.append(
+                {
+                    "target": target,
+                    "scan_id": result.get(
+                        "scan_id",
+                        "",
+                    ),
+                    "severity": finding.get(
+                        "severity",
+                        "",
+                    ),
+                    "name": finding_name(
+                        finding
+                    ),
+                    "kind": finding.get(
+                        "kind",
+                        "",
+                    ),
+                    "confidence": finding.get(
+                        "confidence",
+                        "",
+                    ),
+                    "method": evidence.get(
+                        "method",
+                        finding.get(
+                            "method",
+                            "",
+                        ),
+                    ),
+                    "url": evidence.get(
+                        "url",
+                        finding.get(
+                            "url",
+                            "",
+                        ),
+                    ),
+                    "status": evidence.get(
+                        "status",
+                        evidence.get(
+                            "status_code",
+                            finding.get(
+                                "status_code",
+                                "",
+                            ),
+                        ),
+                    ),
+                }
+            )
+
+    fieldnames = [
+        "target",
+        "scan_id",
+        "severity",
+        "name",
+        "kind",
+        "confidence",
+        "method",
+        "url",
+        "status",
+    ]
+
+    with output_path.open(
+        "w",
+        newline="",
+        encoding="utf-8",
+    ) as handle:
+
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=fieldnames,
+        )
+
+        writer.writeheader()
+        writer.writerows(rows)
+
+    print(
+        f"{Fore.GREEN}"
+        f"[+] CSV saved: {output_path}"
+        f"{Style.RESET_ALL}"
+    )
+
+
+# ============================================================
+# AI REPORT
+# ============================================================
+
+def generate_ai_report(
+    results: List[Dict[str, Any]],
+    model: str,
+    base_url: str,
+) -> Optional[str]:
+    """
+    Optional Ollama integration.
+
+    This is deliberately outside the scanner.
+    The scanner only discovers findings.
+    """
+
+    try:
+        import requests
+    except ImportError:
+        return None
+
+    findings: List[Dict[str, Any]] = []
+
+    for result in results:
+        findings.extend(
+            result.get(
+                "findings",
+                [],
+            )
+            or []
+        )
+
+    if not findings:
+        return (
+            "No findings were produced by VulnForge."
+        )
+
+    prompt = (
+        "Analyze the following authorized security scan findings. "
+        "Summarize the important issues, likely impact, confidence, "
+        "and recommended remediation. Do not invent vulnerabilities.\n\n"
+        + json.dumps(
+            findings,
+            indent=2,
+            default=str,
+        )
+    )
+
+    try:
+
+        response = requests.post(
+            base_url.rstrip("/")
+            + "/api/generate",
+            json={
+                "model": model,
+                "prompt": prompt,
+                "stream": False,
+            },
+            timeout=120,
+        )
+
+        response.raise_for_status()
+
+        data = response.json()
+
+        return data.get(
+            "response"
+        )
+
+    except Exception as exc:
+
+        print(
+            f"{Fore.YELLOW}"
+            f"[WARN] AI report failed: {exc}"
+            f"{Style.RESET_ALL}"
+        )
+
+        return None
+
+
+# ============================================================
+# MAIN SCAN LOOP
+# ============================================================
+
+def run(args: argparse.Namespace) -> int:
+
+    STOP_EVENT.clear()
+
+    install_signal_handlers()
+
+    # --------------------------------------------------------
+    # HISTORY
+    # --------------------------------------------------------
+
+    if args.history:
+
+        show_history()
+        return 0
+
+    # --------------------------------------------------------
+    # SCAN DETAILS
+    # --------------------------------------------------------
+
+    if args.scan_id:
+
+        show_scan(
+            args.scan_id
+        )
+        return 0
+
+    # --------------------------------------------------------
+    # TARGETS
+    # --------------------------------------------------------
+
+    try:
+        targets = load_targets(
+            args
+        )
+    except Exception as exc:
+
+        print(
+            f"{Fore.RED}"
+            f"[ERROR] {exc}"
+            f"{Style.RESET_ALL}",
+            file=sys.stderr,
+        )
+
+        return 2
+
+    if not targets:
+
+        print(
+            f"{Fore.RED}"
+            "No target supplied. Use -u URL or -l LIST."
+            f"{Style.RESET_ALL}",
+            file=sys.stderr,
+        )
+
+        return 2
+
+    # --------------------------------------------------------
+    # VALIDATE SETTINGS
+    # --------------------------------------------------------
+
+    if args.threads < 1:
+        args.threads = 1
+
+    if args.timeout < 1:
+        args.timeout = 1
+
+    if args.rate_limit < 0:
+        args.rate_limit = 0
+
+    if args.delay < 0:
+        args.delay = 0
+
+    if args.jitter < 0:
+        args.jitter = 0
+
+    # --------------------------------------------------------
+    # BANNER
+    # --------------------------------------------------------
+
+    if not args.quiet:
+        print_banner()
+
+        print(
+            f"[*] Targets : "
+            f"{len(targets)}"
+        )
+
+        print(
+            f"[*] Threads : "
+            f"{args.threads}"
+        )
+
+        print(
+            f"[*] Timeout : "
+            f"{args.timeout}s"
+        )
+
+        print()
+
+    # --------------------------------------------------------
+    # SCAN
+    # --------------------------------------------------------
+
+    results: List[Dict[str, Any]] = []
+
+    global_started = time.monotonic()
+
+    for index, target in enumerate(
+        targets,
+        1,
+    ):
+
+        if STOP_EVENT.is_set():
+            break
+
+        if len(targets) > 1 and not args.quiet:
+
+            print(
+                f"\n{Fore.MAGENTA}"
+                f"===== Target {index}/{len(targets)} ====="
+                f"{Style.RESET_ALL}"
+            )
+
+        started = time.monotonic()
+
+        result = scan_one_target(
+            target,
+            args,
+        )
+
+        elapsed = (
+            time.monotonic()
+            - started
+        )
+
+        results.append(
+            result
+        )
+
+        if not args.quiet:
+
+            print_fingerprint(
+                result.get(
+                    "fingerprint",
+                    {},
+                )
+            )
+
+            print_findings(
+                result.get(
+                    "findings",
+                    [],
+                )
+                or []
+            )
+
+            print_summary(
+                result,
+                elapsed,
+            )
+
+    # --------------------------------------------------------
+    # JSON OUTPUT
+    # --------------------------------------------------------
+
+    if args.output:
+
+        if len(results) == 1:
+            payload: Any = results[0]
+        else:
+            payload = results
+
+        save_json(
+            payload,
+            args.output,
+        )
+
+    # --------------------------------------------------------
+    # CSV OUTPUT
+    # --------------------------------------------------------
+
+    if args.csv:
+
+        save_csv(
+            results,
+            args.csv,
+        )
+
+    # --------------------------------------------------------
+    # AI
+    # --------------------------------------------------------
+
+    if args.ai:
+
+        report = generate_ai_report(
+            results,
+            args.ai_model,
+            args.ai_url,
+        )
+
+        if report:
+
+            print(
+                f"\n{Fore.CYAN}"
+                "VulnForge AI Report"
+                f"{Style.RESET_ALL}\n"
+            )
+
+            print(report)
+
+    # --------------------------------------------------------
+    # JSON TERMINAL OUTPUT
+    # --------------------------------------------------------
+
+    if args.json:
+
+        print(
+            json.dumps(
+                results
+                if len(results) != 1
+                else results[0],
+                indent=2,
+                default=str,
+            )
+        )
+
+    # --------------------------------------------------------
+    # FINAL SUMMARY
+    # --------------------------------------------------------
+
+    if not args.quiet:
+
+        total_findings = sum(
+            len(
+                result.get(
+                    "findings",
+                    [],
+                )
+                or []
+            )
+            for result in results
+        )
+
+        saved_count = sum(
+            1
+            for result in results
+            if result.get(
+                "database_saved"
+            )
+        )
+
+        total_elapsed = (
+            time.monotonic()
+            - global_started
+        )
+
+        print(
+            f"{Fore.CYAN}"
+            "╭──────────────────────────────────────────────╮"
+            f"{Style.RESET_ALL}"
+        )
+
+        print(
+            f"{Fore.CYAN}"
+            "│                 SUMMARY                      │"
+            f"{Style.RESET_ALL}"
+        )
+
+        print(
+            f"{Fore.CYAN}"
+            "╰──────────────────────────────────────────────╯"
+            f"{Style.RESET_ALL}"
+        )
+
+        print(
+            f"Targets     : {len(results)}"
+        )
+
+        print(
+            f"Findings    : {total_findings}"
+        )
+
+        print(
+            f"Duration    : {total_elapsed:.2f}s"
+        )
+
+        print(
+            f"DB Saved    : "
+            f"{saved_count}/{len(results)}"
+        )
+
+        if STOP_EVENT.is_set():
+
+            print(
+                f"{Fore.YELLOW}"
+                "⚠ Scan cancelled."
+                f"{Style.RESET_ALL}"
+            )
+
+        elif total_findings == 0:
+
+            print(
+                f"{Fore.GREEN}"
+                "✓ VulnForge finished."
+                f"{Style.RESET_ALL}"
+            )
+
+        else:
+
+            print(
+                f"{Fore.YELLOW}"
+                "⚠ VulnForge finished with findings."
+                f"{Style.RESET_ALL}"
+            )
+
+    return 0
+
+
+# ============================================================
+# PUBLIC ENTRYPOINT
+# ============================================================
+
+def main(
+    argv: Optional[List[str]] = None,
+) -> int:
+
+    parser = build_parser()
+
+    args = parser.parse_args(
+        argv
+    )
+
+    return run(
+        args
+    )
+
+
+# ============================================================
+# MODULE ENTRYPOINT
+# ============================================================
+
+if __name__ == "__main__":
+    raise SystemExit(
+        main()
+    )

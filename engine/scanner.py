@@ -36,6 +36,7 @@ import itertools
 
 from urllib.parse import urljoin, urlparse
 from datetime import datetime
+from typing import Any, Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from engine.template_runtime import TemplateRuntime
@@ -1023,8 +1024,17 @@ class Scanner:
             [],
         )
 
+        # Templates may express a single matcher as either a list of
+        # dicts (documented form) or a bare dict (also seen across
+        # many existing templates, e.g. SQLi/SSRF/XSS/IDOR/upload/CORS
+        # templates). Both are valid single-matcher shorthand; without
+        # this normalization the dict form silently iterates over its
+        # own keys as "matchers" and never fires.
+        if isinstance(matchers, dict):
+            matchers = [matchers]
+
         if not matchers:
-            return True
+            return True, [], 0
 
         valid = [
             matcher
@@ -1036,7 +1046,7 @@ class Scanner:
         ]
 
         if not valid:
-            return False
+            return False, [], 0
 
         body_text = (
             self._decode_response_body(
@@ -1051,7 +1061,7 @@ class Scanner:
             in body_lower
             for pattern in self.block_patterns
         ):
-            return False
+            return False, [], len(valid)
 
         condition = stage.get(
             "matchers-condition",
@@ -1059,20 +1069,23 @@ class Scanner:
         ).lower()
 
         results = []
+        matched_types = []
 
         for matcher in valid:
-            results.append(
-                self._evaluate_matcher(
-                    response,
-                    matcher,
-                    context,
-                )
+            outcome = self._evaluate_matcher(
+                response,
+                matcher,
+                context,
             )
+            results.append(outcome)
+            if outcome:
+                matched_types.append(
+                    str(matcher.get("type", "")).lower()
+                )
 
-        if condition == "or":
-            return any(results)
+        success = any(results) if condition == "or" else all(results)
 
-        return all(results)
+        return success, (matched_types if success else []), len(valid)
 
     def _evaluate_matcher(
         self,
@@ -1579,6 +1592,102 @@ class Scanner:
         }
 
     # ==========================================================
+    # CONFIDENCE SCORING
+    # ==========================================================
+
+    # Weight per matcher type: more specific/harder-to-fake signals
+    # get more weight. A bare "status" or "size" match alone is weak
+    # evidence (lots of pages return 200), while a specific regex/word
+    # match on response content, or an absent/present security header,
+    # is much stronger evidence for that particular vulnerability class.
+    _MATCHER_WEIGHTS = {
+        "regex": 0.40,
+        "word": 0.35,
+        "header": 0.30,
+        "status_not": 0.15,
+        "not_status": 0.15,
+        "size": 0.15,
+        "length": 0.15,
+        "status": 0.10,
+    }
+
+    def _score_confidence(
+        self,
+        matched_types,
+        matcher_total,
+        verified=False,
+    ):
+        """
+        Compute a 0.0-1.0 confidence score from which matcher types
+        actually fired for a finding, plus whether an independent
+        verification stage also confirmed it.
+
+        Rules of thumb (see project spec section 5):
+          - a single generic indicator (e.g. only "status")  -> low
+          - one specific indicator (word/regex/header)        -> medium
+          - multiple independent indicator types               -> high
+          - verification stage independently reproduces it     -> very high
+        """
+        unique_types = set(t for t in matched_types if t)
+
+        if not unique_types:
+            return 0.0
+
+        score = sum(
+            self._MATCHER_WEIGHTS.get(t, 0.10)
+            for t in unique_types
+        )
+
+        # A single weak/generic matcher (status/size only) should never
+        # look like strong evidence on its own.
+        if unique_types <= {"status", "status_not", "not_status", "size", "length"}:
+            score = min(score, 0.25)
+
+        # Reward genuinely independent corroborating signals rather
+        # than just summing weights unboundedly.
+        if len(unique_types) >= 2:
+            score = min(score + 0.10, 0.80)
+
+        if verified:
+            score = min(score + 0.20, 1.0)
+
+        return round(min(max(score, 0.0), 1.0), 2)
+
+    def _run_verification(self, template, context):
+        """
+        Execute the template's optional `verification` stage(s), if
+        present, as an independent re-check of the finding. Returns
+        True only if verification requests were defined AND matched.
+        Never raises; verification failures just mean "not confirmed".
+        """
+        verification_stages = template.get("verification")
+
+        if not verification_stages:
+            return False
+
+        if isinstance(verification_stages, dict):
+            verification_stages = [verification_stages]
+
+        if not isinstance(verification_stages, list):
+            return False
+
+        for v_stage in verification_stages:
+            if not isinstance(v_stage, dict):
+                continue
+            try:
+                response, evidence, _ctx = self._execute_request(
+                    v_stage,
+                    context,
+                )
+            except Exception:
+                continue
+
+            if response is not None and evidence is not None:
+                return True
+
+        return False
+
+    # ==========================================================
     # REQUEST EXECUTION
     # ==========================================================
 
@@ -1750,14 +1859,17 @@ class Scanner:
                         )
                     )
 
-                    if (
-                        response
-                        and self._match_stage(
+                    match_ok, matched_types, matcher_total = (
+                        self._match_stage(
                             response,
                             stage,
                             request_context,
                         )
-                    ):
+                        if response
+                        else (False, [], 0)
+                    )
+
+                    if match_ok:
                         evidence = (
                             self._build_evidence(
                                 method,
@@ -1767,6 +1879,8 @@ class Scanner:
                                 response,
                             )
                         )
+                        evidence["matched_types"] = matched_types
+                        evidence["matcher_total"] = matcher_total
 
                         return (
                             response,
@@ -1803,14 +1917,17 @@ class Scanner:
                 stage,
             )
 
-            if (
-                response
-                and self._match_stage(
+            match_ok, matched_types, matcher_total = (
+                self._match_stage(
                     response,
                     stage,
                     context,
                 )
-            ):
+                if response
+                else (False, [], 0)
+            )
+
+            if match_ok:
                 evidence = (
                     self._build_evidence(
                         method,
@@ -1820,6 +1937,8 @@ class Scanner:
                         response,
                     )
                 )
+                evidence["matched_types"] = matched_types
+                evidence["matcher_total"] = matcher_total
 
                 return (
                     response,
@@ -2089,6 +2208,16 @@ class Scanner:
 
         stage_variables = {}
 
+        # Import differential helpers
+        from core.differential import (
+            ResponseFingerprint,
+            compare_boolean_responses,
+            compare_timing_responses,
+        )
+
+        # We'll collect paired stages (true/false, probe/confirm)
+        pending_pairs = {}  # base_id -> {"true": (resp, ev), "false": (resp, ev), ...}
+
         for index, stage in enumerate(
             stages
         ):
@@ -2103,6 +2232,10 @@ class Scanner:
                 **stage_variables,
             }
 
+            stage_id = str(stage.get("id", ""))
+            is_boolean_pair = stage_id.endswith(("-true", "-false"))
+            is_timing_pair = stage_id.endswith(("-probe", "-confirm"))
+
             (
                 response,
                 evidence,
@@ -2112,35 +2245,140 @@ class Scanner:
                 request_context,
             )
 
-            if response is None:
-                continue
+            if is_boolean_pair or is_timing_pair:
+                # Determine role
+                if stage_id.endswith("-true"):
+                    role = "true"
+                elif stage_id.endswith("-false"):
+                    role = "false"
+                elif stage_id.endswith("-probe"):
+                    role = "probe"
+                else:
+                    role = "confirm"
+                base_id = stage_id[: -len("-" + role)]
 
-            # --------------------------------------------------
-            # Extract variables
-            # --------------------------------------------------
+                pending_pairs.setdefault(base_id, {})[role] = (response, evidence)
 
-            extracted = (
-                self._extract_from_response(
-                    response,
-                    stage.get(
-                        "extractors",
-                        [],
-                    ),
-                    local_context,
+                # Check if we have both halves
+                have_pair = (
+                    (is_boolean_pair and "true" in pending_pairs[base_id] and "false" in pending_pairs[base_id])
+                    or
+                    (is_timing_pair and "probe" in pending_pairs[base_id] and "confirm" in pending_pairs[base_id])
                 )
+
+                if not have_pair:
+                    # Wait for the paired stage
+                    continue
+
+                # ---- We have both halves - run differential ----
+                if is_boolean_pair:
+                    true_resp, true_ev = pending_pairs[base_id]["true"]
+                    false_resp, false_ev = pending_pairs[base_id]["false"]
+                    if true_resp is None or false_resp is None:
+                        # Remove pair to avoid re-processing
+                        del pending_pairs[base_id]
+                        continue
+
+                    baseline_fp = ResponseFingerprint(
+                        200, len(true_resp.text), true_resp.text, 0.0
+                    )
+                    true_fp = ResponseFingerprint(
+                        true_resp.status_code, len(true_resp.text), true_resp.text, 0.0
+                    )
+                    false_fp = ResponseFingerprint(
+                        false_resp.status_code, len(false_resp.text), false_resp.text, 0.0
+                    )
+                    diff = compare_boolean_responses(baseline_fp, true_fp, false_fp)
+                    if not diff.is_significant:
+                        if not self.quiet:
+                            print(f"[SKIP] {template_id}:{base_id} — {diff.reason}")
+                        del pending_pairs[base_id]
+                        continue
+
+                    # Use the true response as the finding evidence
+                    response, evidence = true_resp, true_ev
+                    if evidence is not None:
+                        evidence["matched_types"] = list(
+                            set((evidence.get("matched_types") or []) + ["boolean_differential"])
+                        )
+                        evidence["differential_reason"] = diff.reason
+
+                else:  # timing pair
+                    probe_resp, probe_ev = pending_pairs[base_id]["probe"]
+                    confirm_resp, confirm_ev = pending_pairs[base_id]["confirm"]
+                    if probe_resp is None or confirm_resp is None:
+                        del pending_pairs[base_id]
+                        continue
+
+                    baseline_fp = ResponseFingerprint(200, 0, "", 0.3)
+                    probe_fp = ResponseFingerprint(
+                        probe_resp.status_code, 0, "", probe_resp.elapsed.total_seconds()
+                    )
+                    confirm_fp = ResponseFingerprint(
+                        confirm_resp.status_code, 0, "", confirm_resp.elapsed.total_seconds()
+                    )
+                    timing = compare_timing_responses(baseline_fp, probe_fp, confirm_fp)
+                    if not timing.is_significant:
+                        if not self.quiet:
+                            print(f"[SKIP] {template_id}:{base_id} — {timing.reason}")
+                        del pending_pairs[base_id]
+                        continue
+
+                    response, evidence = probe_resp, probe_ev
+                    if evidence is not None:
+                        evidence["matched_types"] = list(
+                            set((evidence.get("matched_types") or []) + ["time_differential"])
+                        )
+                        evidence["differential_reason"] = timing.reason
+
+                # Remove the pair so we don't re-process
+                del pending_pairs[base_id]
+
+                # Now response and evidence are set, fall through to finding creation
+                # (if we didn't skip due to insignificant diff)
+            else:
+                # Single-stage (non-pair): normal matching
+                if response is None:
+                    continue
+                # We need to evaluate matchers here; _execute_request already did matching
+                # but we need to get the match result. Actually _execute_request already
+                # returns evidence only if matched. So if evidence is None, no match.
+                # But we need to check if the stage matched; _execute_request returns evidence only if match_ok.
+                # However we already have evidence from _execute_request; if it's None, no match.
+                # So we just check if evidence is not None.
+                if evidence is None:
+                    continue
+
+            # ---- Now we have a matched finding (either from single stage or pair) ----
+
+            # Extract variables (done inside _execute_request already, but updated_context may contain more)
+            # We already have response and evidence.
+            # Do we need to run verification? Let's keep existing verification logic.
+            # We'll compute confidence and lifecycle stage.
+
+            matched_types = evidence.get("matched_types", []) if evidence else []
+            matcher_total = evidence.get("matcher_total", 0) if evidence else 0
+
+            # Verification (optional)
+            confirmed = self._run_verification(
+                template,
+                {**local_context, **stage_variables},
             )
 
-            stage_variables.update(
-                extracted
+            confidence = self._score_confidence(
+                matched_types,
+                matcher_total,
+                verified=confirmed,
             )
 
-            local_context.update(
-                extracted
-            )
-
-            # --------------------------------------------------
-            # Finding
-            # --------------------------------------------------
+            if confidence < 0.30:
+                lifecycle_stage = "signal"
+            elif confidence < 0.60:
+                lifecycle_stage = "possible"
+            elif confirmed:
+                lifecycle_stage = "verified"
+            else:
+                lifecycle_stage = "possible"
 
             finding = {
                 "template_id": template_id,
@@ -2149,65 +2387,116 @@ class Scanner:
                 "impact": impact,
                 "chain": chain,
                 "evidence": evidence,
-                "extracted": extracted,
+                "extracted": {},   # Could be filled from stage_variables
                 "exploit": None,
                 "stage_index": index,
-                "template_file": template.get(
-                    "_file"
-                ),
+                "template_file": template.get("_file"),
+                "confidence": confidence,
+                "confirmed": confirmed,
+                "lifecycle_stage": lifecycle_stage,
+                "matched_types": matched_types,
             }
 
-            # --------------------------------------------------
             # Optional exploitation
-            # --------------------------------------------------
-
             if self.exploit_enabled:
-                exploit_result = (
-                    self._attempt_exploitation(
-                        finding,
-                        template,
-                    )
-                )
-
+                exploit_result = self._attempt_exploitation(finding, template)
                 if exploit_result:
-                    finding[
-                        "exploit"
-                    ] = exploit_result
-
+                    finding["exploit"] = exploit_result
                     if not self.quiet:
-                        status = (
-                            "SUCCESS"
-                            if exploit_result[
-                                "success"
-                            ]
-                            else "FAILED"
-                        )
+                        status = "SUCCESS" if exploit_result["success"] else "FAILED"
+                        print(f"[EXPLOIT] {template_id} - {status}")
 
-                        print(
-                            f"[EXPLOIT] "
-                            f"{template_id} - "
-                            f"{status}"
-                        )
-
-            # --------------------------------------------------
-            # Store finding
-            # --------------------------------------------------
-
-            self.findings.append(
-                finding
-            )
+            self.findings.append(finding)
 
             if not self.quiet:
-                print(
-                    f"[VULN] "
-                    f"{str(severity).upper()}: "
-                    f"{template_name} at "
-                    f"{evidence['url']}"
+                print(f"[VULN] {str(severity).upper()}: {template_name} at {evidence['url']}")
+
+            # After producing a finding, break the stage loop (stop processing further stages)
+            # But careful: for paired stages we already consumed both; we should break after finding.
+            break
+
+        # If we finished loop without finding, nothing added.
+        """
+        Collapse a URL to its path shape (scheme+host+path, no query
+        string) so that the same vulnerable endpoint hit with 20
+        different payload permutations fingerprints as one place, not
+        20 unrelated ones.
+        """
+        try:
+            parsed = urlparse(url)
+            return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        except Exception:
+            return url
+
+    def _fingerprint(self, finding):
+        evidence = finding.get("evidence") or {}
+        url = evidence.get("url", "")
+        param_hint = ",".join(sorted(finding.get("matched_types", [])))
+        return (
+            finding.get("template_id"),
+            self._endpoint_shape(url),
+            param_hint,
+        )
+
+    def _deduplicate_findings(self, findings):
+        """
+        Correlate findings that share (template_id, endpoint shape,
+        matcher signature) into a single record with an occurrence
+        count and the list of distinct affected endpoints, keeping the
+        highest-confidence/most-confirmed instance as the representative
+        evidence. See spec section 8.
+        """
+        groups: Dict[Any, List[Dict[str, Any]]] = {}
+
+        for finding in findings:
+            key = self._fingerprint(finding)
+            groups.setdefault(key, []).append(finding)
+
+        deduped = []
+
+        for key, group in groups.items():
+            group.sort(
+                key=lambda f: (
+                    f.get("confirmed", False),
+                    f.get("confidence", 0.0),
+                ),
+                reverse=True,
+            )
+
+            best = dict(group[0])
+
+            affected_endpoints = sorted(set(
+                self._endpoint_shape(
+                    (f.get("evidence") or {}).get("url", "")
+                )
+                for f in group
+            ))
+
+            best["occurrences"] = len(group)
+            best["affected_endpoints"] = affected_endpoints
+            best["affected_endpoint_count"] = len(affected_endpoints)
+
+            # Persist correlation metadata inside the evidence blob too,
+            # since core.database.save_scan() only writes a fixed set of
+            # top-level finding columns - this keeps it in the DB and
+            # available to history/dashboard/PDF without a schema change.
+            if isinstance(best.get("evidence"), dict):
+                best["evidence"] = dict(best["evidence"])
+                best["evidence"]["occurrences"] = len(group)
+                best["evidence"]["affected_endpoints"] = affected_endpoints
+
+            # Multiple independent occurrences of the same real issue
+            # is itself corroborating evidence — nudge confidence up
+            # slightly, capped, rather than letting 20 duplicate rows
+            # each individually claim the same confidence.
+            if len(group) > 1:
+                best["confidence"] = round(
+                    min(best.get("confidence", 0.0) + 0.05, 1.0), 2
                 )
 
-            # A matching stage is enough to
-            # produce a finding for this template.
-            break
+            deduped.append(best)
+
+        return deduped
 
     # ==========================================================
     # SCAN
@@ -2320,11 +2609,23 @@ class Scanner:
         # RESULT
         # ------------------------------------------------------
 
+        deduped_findings = self._deduplicate_findings(
+            self.findings
+        )
+
+        if not self.quiet and len(deduped_findings) != len(self.findings):
+            print(
+                f"[CORRELATE] {len(self.findings)} raw signal(s) "
+                f"correlated into {len(deduped_findings)} "
+                f"distinct finding(s)."
+            )
+
         return {
             "url": self.raw_url,
             "base_url": self.base_url,
             "scan_id": self.scan_id,
-            "findings": self.findings,
+            "findings": deduped_findings,
+            "raw_signal_count": len(self.findings),
             "total_templates": len(
                 self.templates
             ),

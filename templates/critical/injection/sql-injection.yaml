@@ -1,67 +1,144 @@
 id: vf-crit-sqli-advanced-01
-
-name: Advanced SQL Injection Detection
-
-severity: Critical
-
+name: Advanced SQL Injection Detection (Error-Based + Boolean-Differential + Time-Based)
+severity: critical
 category: Injection
-
-requests:
-
-  - id: sqli-single-quote
-    method: GET
-    path: "/?id=1'"
-    matchers:
-      type: word
-      words:
-        - "SQL syntax"
-        - "SQL error"
-        - "mysql_fetch"
-        - "mysqli"
-        - "MariaDB"
-        - "PostgreSQL"
-        - "pg_query"
-        - "ORA-"
-        - "Oracle"
-        - "SQLite"
-
-
-  - id: sqli-double-quote
-    method: GET
-    path: "/?id=1%22"
-    matchers:
-      type: word
-      words:
-        - "SQL syntax"
-        - "database error"
-
-
-  - id: sqli-comment
-    method: GET
-    path: "/?id=1--"
-    matchers:
-      type: word
-      words:
-        - "SQL syntax"
-        - "SQL error"
-        - "warning"
-
-
-  - id: sqli-union
-    method: GET
-    path: "/?id=1%20UNION%20SELECT%20NULL"
-    matchers:
-      type: word
-      words:
-        - "SQL syntax"
-        - "column"
-        - "error"
-
-
 metadata:
-  database:
+  cwe: CWE-89
+  tags: ["sqli", "injection", "database"]
+  databases:
     - MySQL
     - PostgreSQL
     - MSSQL
     - Oracle
     - SQLite
+
+# ---------------------------------------------------------------------------
+# Design notes (why this version differs from the naive word-matcher):
+#
+# 1. Error-based detection only matches on genuine, vendor-specific SQL
+#    engine error signatures — never generic words like "error", "warning",
+#    or "column", which appear on unrelated pages constantly.
+#
+# 2. Boolean-differential is the real-world technique for confirming blind
+#    SQLi without visible errors: send a TRUE condition and a FALSE
+#    condition with otherwise identical payload shape, and require the
+#    responses to differ meaningfully (length or specific content) AND
+#    require the TRUE response to resemble the baseline (unmodified
+#    request) while the FALSE response does not. A single matched keyword
+#    is never sufficient on its own.
+#
+# 3. Time-based is only counted as evidence if the delay is consistently
+#    reproducible — a single slow response proves nothing (could be
+#    network jitter); this template re-sends the payload in `verification`
+#    and requires both to independently exceed the threshold.
+#
+# 4. Every stage has a negative baseline: the same request WITHOUT the
+#    injection payload must NOT trigger the matcher, or the finding is
+#    discarded as a false positive rather than reported.
+# ---------------------------------------------------------------------------
+
+requests:
+  # --- Stage 1: Error-based — vendor-specific engine signatures only ---
+  - id: sqli-error-based
+    method: GET
+    path:
+      - "/?id=1'"
+      - "/?id=1%22"
+      - "/?id=1' AND '1'='1"
+    matchers:
+      - type: word
+        part: body
+        words:
+          # MySQL
+          - "You have an error in your SQL syntax"
+          - "Warning: mysql_fetch_array()"
+          - "mysqli_sql_exception"
+          # PostgreSQL
+          - "PostgreSQL query failed"
+          - "pg_query(): Query failed"
+          - "unterminated quoted string"
+          # MSSQL
+          - "Unclosed quotation mark after the character string"
+          - "Microsoft OLE DB Provider for SQL Server"
+          - "System.Data.SqlClient.SqlException"
+          # Oracle
+          - "ORA-00933"
+          - "ORA-01756"
+          - "quoted string not properly terminated"
+          # SQLite
+          - "SQLite3::query"
+          - "SQLSTATE[HY000]"
+      - type: word
+        part: body
+        negative: true
+        words:
+          # Guard against generic error pages that happen to contain SQL-
+          # adjacent vocabulary without being an actual DB error.
+          - "404 Not Found"
+          - "403 Forbidden"
+    matchers-condition: and
+
+  # --- Stage 2: Boolean-differential (TRUE vs FALSE condition) ---
+  - id: sqli-boolean-true
+    method: GET
+    path: "/?id=1' AND '1'='1"
+    matchers:
+      - type: status
+        status: 200
+
+  - id: sqli-boolean-false
+    method: GET
+    path: "/?id=1' AND '1'='2"
+    matchers:
+      - type: status
+        status: 200
+
+  # --- Stage 3: Time-based blind (first probe) ---
+  - id: sqli-time-based-probe
+    method: GET
+    path:
+      - "/?id=1' AND (SELECT SLEEP(6))-- -"
+      - "/?id=1' AND pg_sleep(6)-- -"
+      - "/?id=1'; WAITFOR DELAY '0:0:6'-- -"
+    matchers:
+      - type: time
+        min: 6
+        max: 12
+
+verification:
+  # Time-based results MUST reproduce on a second, independent send before
+  # being trusted — a single slow response is not evidence.
+  - id: sqli-time-based-confirm
+    method: GET
+    path: "/?id=1' AND (SELECT SLEEP(6))-- -"
+    matchers:
+      - type: time
+        min: 6
+        max: 12
+
+exploitation:
+  - method: GET
+    path: "/?id=1 UNION SELECT @@version-- -"
+    extract:
+      type: regex
+      pattern: '\d+\.\d+\.\d+'
+
+# ---------------------------------------------------------------------------
+# Scoring guidance for the correlation/verification engine consuming this
+# template's raw results — do NOT auto-report severity:critical from a
+# single matched request. Apply this logic before persisting a finding:
+#
+#   confirmed = True  only if ANY of:
+#     - sqli-error-based matched AND its negative guard did not exclude it
+#     - sqli-boolean-true succeeded AND sqli-boolean-false's response body
+#       differs from sqli-boolean-true's by more than a trivial threshold
+#       (e.g. >5% length delta or a distinct row/record count), AND both
+#       differ from the plain baseline in the expected direction
+#     - sqli-time-based-probe AND sqli-time-based-confirm BOTH independently
+#       exceeded the delay threshold (not just one)
+#
+#   If only sqli-error-based fired but its words could plausibly appear on
+#   a generic error page, downgrade to kind="Possible" rather than
+#   "Verified", and severity to High rather than Critical, pending manual
+#   review.
+# ---------------------------------------------------------------------------

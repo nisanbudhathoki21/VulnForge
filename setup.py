@@ -15,7 +15,6 @@ setup(
         "PyYAML>=6.0.2",
         "lxml>=4.9.3",
         "rich>=13.0.0",
-        "SQLAlchemy>=2.0.0",
     ],
 
     entry_points={

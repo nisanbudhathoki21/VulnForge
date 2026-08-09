@@ -1,13 +1,44 @@
+# Python
 __pycache__/
 *.pyc
 *.pyo
+*.pyd
 *.so
+*.dylib
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Virtual environment
 .venv/
 venv/
-vulnforge.db
-output/
+env/
+ENV/
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Logs and reports
 *.log
-*.tmp
-.DS_Store
+*.html
+*.pdf
+*.csv
+*.json
+reports/
+
+# IDE
+.vscode/
+.idea/
 *.swp
 *.swo
+
+# OS junk
+.DS_Store
+Thumbs.db
+
+# Scanner temporary files
+*.tmp
+*.cache

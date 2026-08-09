@@ -1,0 +1,67 @@
+id: vf-crit-sqli-advanced-01
+
+name: Advanced SQL Injection Detection
+
+severity: Critical
+
+category: Injection
+
+requests:
+
+  - id: sqli-single-quote
+    method: GET
+    path: "/?id=1'"
+    matchers:
+      type: word
+      words:
+        - "SQL syntax"
+        - "SQL error"
+        - "mysql_fetch"
+        - "mysqli"
+        - "MariaDB"
+        - "PostgreSQL"
+        - "pg_query"
+        - "ORA-"
+        - "Oracle"
+        - "SQLite"
+
+
+  - id: sqli-double-quote
+    method: GET
+    path: "/?id=1%22"
+    matchers:
+      type: word
+      words:
+        - "SQL syntax"
+        - "database error"
+
+
+  - id: sqli-comment
+    method: GET
+    path: "/?id=1--"
+    matchers:
+      type: word
+      words:
+        - "SQL syntax"
+        - "SQL error"
+        - "warning"
+
+
+  - id: sqli-union
+    method: GET
+    path: "/?id=1%20UNION%20SELECT%20NULL"
+    matchers:
+      type: word
+      words:
+        - "SQL syntax"
+        - "column"
+        - "error"
+
+
+metadata:
+  database:
+    - MySQL
+    - PostgreSQL
+    - MSSQL
+    - Oracle
+    - SQLite

@@ -6,7 +6,7 @@ from core import setup_logging
 from workspace import Workspace, WorkspaceStore
 from templates import TemplateLoader
 from httpclient import HttpClient
-from scanner import Scanner
+from engine.scanner import Scanner
 from report import to_markdown
 import logging
 

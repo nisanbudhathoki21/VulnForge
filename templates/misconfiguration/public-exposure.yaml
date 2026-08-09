@@ -1,0 +1,320 @@
+id: public-exposure
+name: Public-Facing Security Exposure Checks
+severity: medium
+
+description: >
+  Generic public-facing HTTP security checks for common information
+  disclosure, exposed configuration, backup files, administrative
+  interfaces, GraphQL introspection, CORS, directory listing, SQL
+  error indicators, and reflected input. Results are automated
+  indicators and require manual validation.
+
+requests:
+
+# ================================================================
+# 1. Git repository exposure
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/.git/HEAD"
+    - "{{BaseURL}}/.git/config"
+    - "{{BaseURL}}/.git/index"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: word
+      part: body
+      words:
+        - "ref: refs/heads/"
+        - "[core]"
+
+
+# ================================================================
+# 2. Environment / configuration exposure
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/.env"
+    - "{{BaseURL}}/.env.production"
+    - "{{BaseURL}}/.env.local"
+    - "{{BaseURL}}/appsettings.json"
+    - "{{BaseURL}}/config/application.properties"
+    - "{{BaseURL}}/secrets.json"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: regex
+      part: body
+      regex:
+        - "DB_"
+        - "SECRET"
+        - "AWS_"
+        - "PASSWORD"
+        - "TOKEN"
+        - "API_KEY"
+        - "JWT_SECRET"
+        - "REDIS"
+        - "MONGO"
+
+
+# ================================================================
+# 3. Backup file exposure
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/backup.zip"
+    - "{{BaseURL}}/backup.tar.gz"
+    - "{{BaseURL}}/dump.sql"
+    - "{{BaseURL}}/database.sql"
+    - "{{BaseURL}}/site.zip"
+    - "{{BaseURL}}/www.zip"
+    - "{{BaseURL}}/backup.sql"
+
+  matchers:
+    - type: status
+      status: 200
+
+
+# ================================================================
+# 4. Common administrative / debug interfaces
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/sidekiq"
+    - "{{BaseURL}}/sidekiq/busy"
+    - "{{BaseURL}}/sidekiq/queues"
+    - "{{BaseURL}}/actuator"
+    - "{{BaseURL}}/actuator/health"
+    - "{{BaseURL}}/actuator/env"
+    - "{{BaseURL}}/swagger.json"
+    - "{{BaseURL}}/swagger/v1/swagger.json"
+    - "{{BaseURL}}/api-docs"
+    - "{{BaseURL}}/phpinfo.php"
+    - "{{BaseURL}}/server-status"
+    - "{{BaseURL}}/_status"
+    - "{{BaseURL}}/debug"
+    - "{{BaseURL}}/debug/vars"
+
+  matchers:
+    - type: status
+      status: 200
+
+
+# ================================================================
+# 5. GraphQL introspection
+# ================================================================
+
+- method: POST
+  path:
+    - "{{BaseURL}}/graphql"
+    - "{{BaseURL}}/v1/graphql"
+    - "{{BaseURL}}/gql"
+
+  headers:
+    Content-Type: "application/json"
+    Accept: "application/json"
+
+  body: |
+    {
+      "query": "{ __schema { queryType { name } } }"
+    }
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: word
+      part: body
+      words:
+        - "__schema"
+        - "queryType"
+
+
+# ================================================================
+# 6. CORS wildcard indicator
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/"
+    - "{{BaseURL}}/api"
+
+  headers:
+    Origin: "https://example.com"
+
+  matchers:
+    - type: header
+      name: Access-Control-Allow-Origin
+      value: "*"
+
+
+# ================================================================
+# 7. Directory listing
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/images/"
+    - "{{BaseURL}}/assets/"
+    - "{{BaseURL}}/static/"
+    - "{{BaseURL}}/uploads/"
+    - "{{BaseURL}}/backup/"
+    - "{{BaseURL}}/files/"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: word
+      part: body
+      words:
+        - "Index of /"
+        - "Directory listing"
+
+
+# ================================================================
+# 8. SQL error indicators
+#
+# This is only an injection indicator.
+# It does NOT prove SQL injection.
+# Dedicated SQLi templates should perform confirmation.
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/search?q=test%27"
+    - "{{BaseURL}}/products?category=1%27"
+    - "{{BaseURL}}/gift?code=test%27"
+    - "{{BaseURL}}/?id=1%27"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: regex
+      part: body
+      regex:
+        - "SQLSTATE"
+        - "MySQL"
+        - "PostgreSQL"
+        - "ORA-[0-9]+"
+        - "SQLite"
+        - "Microsoft SQL Server"
+        - "Unclosed quotation mark"
+        - "syntax error"
+        - "SQL syntax"
+
+
+# ================================================================
+# 9. Reflected input indicator
+#
+# Reflection alone is NOT XSS.
+# This should lead to investigation / XSS verification.
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/search?q=VulnForgeReflectionTest"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: word
+      part: body
+      words:
+        - "VulnForgeReflectionTest"
+
+
+# ================================================================
+# 10. Common source-map exposure
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/app.js.map"
+    - "{{BaseURL}}/main.js.map"
+    - "{{BaseURL}}/bundle.js.map"
+    - "{{BaseURL}}/assets/app.js.map"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: word
+      part: body
+      words:
+        - "\"sources\""
+        - "\"version\""
+
+
+# ================================================================
+# 11. Common API documentation exposure
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/openapi.json"
+    - "{{BaseURL}}/openapi.yaml"
+    - "{{BaseURL}}/swagger.json"
+    - "{{BaseURL}}/api/swagger.json"
+
+  matchers:
+    - type: status
+      status: 200
+
+    - type: regex
+      part: body
+      regex:
+        - "\"openapi\""
+        - "\"swagger\""
+        - "\"paths\""
+
+
+# ================================================================
+# 12. Common health / metrics endpoints
+# ================================================================
+
+- method: GET
+  path:
+    - "{{BaseURL}}/health"
+    - "{{BaseURL}}/healthz"
+    - "{{BaseURL}}/ready"
+    - "{{BaseURL}}/readyz"
+    - "{{BaseURL}}/metrics"
+
+  matchers:
+    - type: status
+      status: 200
+
+
+# ================================================================
+# Notes
+# ================================================================
+#
+# These checks are generic and are NOT associated with a particular
+# company or target.
+#
+# Important:
+#
+# - Reflection does not prove XSS.
+# - SQL error messages do not prove SQL injection.
+# - GraphQL introspection does not automatically mean a vulnerability.
+# - CORS "*" does not automatically mean exploitable CORS.
+# - An exposed health endpoint may be intentional.
+# - API documentation may be intentionally public.
+#
+# Dedicated verification templates should determine exploitability
+# and confidence.
+#
+# DNS/subdomain takeover is intentionally excluded because it requires
+# DNS-aware verification rather than ordinary HTTP requests.
+# ================================================================
