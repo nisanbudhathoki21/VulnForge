@@ -694,36 +694,82 @@ class Scanner:
     # ==========================================================
 
     def load_templates(self):
+        """
+        Load all valid VulnForge templates.
+
+        Returns:
+            list: Loaded template dictionaries.
+        """
+
         self.templates = []
 
-        if os.path.isfile(
-            self.template_dir
-        ):
+        # --------------------------------------------------
+        # SINGLE TEMPLATE FILE
+        # --------------------------------------------------
+
+        if os.path.isfile(self.template_dir):
             self._load_template_file(
                 self.template_dir
             )
-            return
 
-        if not os.path.isdir(
+            return self.templates
+
+        # --------------------------------------------------
+        # TEMPLATE DIRECTORY
+        # --------------------------------------------------
+
+        if not os.path.isdir(self.template_dir):
+
+            if not self.quiet:
+                print(
+                    f"[WARN] Template directory not found: "
+                    f"{self.template_dir}"
+                )
+
+            return self.templates
+
+        # --------------------------------------------------
+        # RECURSIVE TEMPLATE LOADING
+        # --------------------------------------------------
+
+        for root, dirs, files in os.walk(
             self.template_dir
         ):
-            return
 
-        for root, _, files in os.walk(
-            self.template_dir
-        ):
+            # Ignore directories that should never
+            # participate in an active scan.
+
+            dirs[:] = sorted(
+                directory
+                for directory in dirs
+                if directory not in {
+                    "_disabled",
+                    ".git",
+                    "__pycache__",
+                }
+            )
+
             for filename in sorted(files):
-                if filename.endswith(
+
+                if not filename.lower().endswith(
                     (".yaml", ".yml")
                 ):
-                    path = os.path.join(
-                        root,
-                        filename,
-                    )
+                    continue
 
-                    self._load_template_file(
-                        path
-                    )
+                path = os.path.join(
+                    root,
+                    filename,
+                )
+
+                self._load_template_file(
+                    path
+                )
+
+        # --------------------------------------------------
+        # RETURN LOADED TEMPLATES
+        # --------------------------------------------------
+
+        return self.templates
 
     def _load_template_file(self, path):
         try:

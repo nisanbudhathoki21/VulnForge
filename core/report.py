@@ -38,7 +38,7 @@ class BaseAIClient:
 
 class OllamaClient(BaseAIClient):
     """Free, local AI via Ollama."""
-    def __init__(self, model="llama2", base_url="http://localhost:11434"):
+    def __init__(self, model="qwen3:8b", base_url="http://localhost:11434"):
         self.model = model
         self.base_url = base_url
 
