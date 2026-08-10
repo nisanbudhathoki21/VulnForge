@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from pathlib import Path
 from typing import List
 
 import yaml
@@ -8,9 +9,11 @@ import yaml
 from .schema import Template, RequestDef
 
 
+_DEFAULT_TEMPLATES_DIR = str(Path(__file__).resolve().parents[1] / "templates")
+
 class TemplateLoader:
-    def __init__(self, base_dir: str = "templates"):
-        self.base = os.path.abspath(base_dir)
+    def __init__(self, base_dir: str = None):
+        self.base = os.path.abspath(base_dir or _DEFAULT_TEMPLATES_DIR)
 
     def _is_disabled_path(self, path: str) -> bool:
         """

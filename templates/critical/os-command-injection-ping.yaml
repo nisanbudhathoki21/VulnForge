@@ -1,0 +1,18 @@
+id: os-command-injection-ping
+name: OS Command Injection – Ping Tool
+severity: critical
+impact: Attacker can execute arbitrary OS commands on the server via the host field of the ping utility.
+requests:
+  - method: POST
+    path:
+      - "{{BaseURL}}/ping"
+    body: "host=127.0.0.1; echo VF_CMD_INJ_TEST"
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "VF_CMD_INJ_TEST"

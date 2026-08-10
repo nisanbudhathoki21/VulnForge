@@ -2416,6 +2416,8 @@ class Scanner:
             break
 
         # If we finished loop without finding, nothing added.
+
+    def _endpoint_shape(self, url):
         """
         Collapse a URL to its path shape (scheme+host+path, no query
         string) so that the same vulnerable endpoint hit with 20

@@ -1,0 +1,1 @@
+VulnForge demo file. This file exists only to demonstrate the local file-read vulnerability.

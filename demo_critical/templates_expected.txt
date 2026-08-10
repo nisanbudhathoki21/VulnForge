@@ -1,0 +1,10 @@
+Expected template categories for this demo:
+
+1. SQL Injection
+2. Command Injection
+3. SSTI
+4. Authorization / Privilege Escalation
+5. Path Traversal / Arbitrary File Read
+6. SSRF
+
+These are intentionally obvious demo sinks. Your VulnForge templates still need appropriate request/response checks before reporting a vulnerability as VERIFIED.
