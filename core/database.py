@@ -1,691 +1,619 @@
 #!/usr/bin/env python3
 """
-core/database.py — VulnForge Database Layer
+Database layer for VulnForge.
 
-Production-grade SQLite persistence layer for scans, findings, and
-fingerprints, with automatic schema migration and optional local-LLM
-(Ollama) finding explanations.
+Uses SQLite for local persistence.
 
-Design notes:
-    * DB_PATH is resolved relative to the project root (parent of this
-      file's directory), NOT the process's current working directory.
-      This avoids the classic bug where running the CLI from a
-      different cwd silently creates a fresh, empty database.
-    * All connections are opened/closed per call via a context manager
-      rather than held open — safe for concurrent scan threads.
-    * AI explanation generation is best-effort and never blocks a scan
-      from being persisted: failures are logged and stored as an empty
-      string, not raised.
+Important:
+- The database is stored relative to the VulnForge project root.
+- Retrieval functions return normal dictionaries, not sqlite3.Row,
+  so dashboard.py can safely use .get().
+- Each operation opens and closes its own SQLite connection.
 """
 
-from __future__ import annotations
-
-import json
-import logging
-import os
 import sqlite3
-from contextlib import contextmanager
-from dataclasses import dataclass
-from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
-
-try:
-    import requests
-except ImportError:  # pragma: no cover - requests should be a hard dependency
-    requests = None  # type: ignore
-
-# ---------------------------------------------------------------------------
-# Configuration
-# ---------------------------------------------------------------------------
-
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = str(PROJECT_ROOT / "vulnforge.db")
-
-# Override via environment for CI / testing / alternate deployments,
-# e.g. VULNFORGE_DB_PATH=/tmp/test.db
-DB_PATH = os.environ.get("VULNFORGE_DB_PATH", DB_PATH)
-
-OLLAMA_URL = os.environ.get("VULNFORGE_OLLAMA_URL", "http://localhost:11434/api/generate")
-OLLAMA_MODEL = os.environ.get("VULNFORGE_OLLAMA_MODEL", "llama3")
-OLLAMA_TIMEOUT = float(os.environ.get("VULNFORGE_OLLAMA_TIMEOUT", "30"))
-AI_EXPLANATIONS_ENABLED = os.environ.get("VULNFORGE_AI_EXPLANATIONS", "1") != "0"
-
-logger = logging.getLogger(__name__)
-
-# ---------------------------------------------------------------------------
-# Schema
-# ---------------------------------------------------------------------------
-
-SCHEMA: Dict[str, str] = {
-    "scans": """
-        CREATE TABLE IF NOT EXISTS scans (
-            scan_id TEXT PRIMARY KEY,
-            target TEXT NOT NULL,
-            timestamp TEXT NOT NULL,
-            start_time TEXT,
-            end_time TEXT,
-            fingerprint TEXT,
-            findings_count INTEGER DEFAULT 0,
-            scan_duration REAL,
-            status TEXT DEFAULT 'completed',
-            scan_depth INTEGER DEFAULT 1,
-            templates_loaded INTEGER DEFAULT 0,
-            requests_sent INTEGER DEFAULT 0,
-            errors_count INTEGER DEFAULT 0
-        )
-    """,
-    "findings": """
-        CREATE TABLE IF NOT EXISTS findings (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scan_id TEXT NOT NULL,
-            template_id TEXT,
-            name TEXT NOT NULL,
-            severity TEXT DEFAULT 'info',
-            impact TEXT,
-            chain TEXT,
-            evidence TEXT,
-            extracted TEXT,
-            confirmed BOOLEAN DEFAULT 0,
-            exploit_attempted BOOLEAN DEFAULT 0,
-            exploit_success BOOLEAN DEFAULT 0,
-            confidence REAL DEFAULT 0.0,
-            cwe TEXT,
-            owasp TEXT,
-            remediation TEXT,
-            ai_explanation TEXT,
-            created_at TEXT,
-            FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE
-        )
-    """,
-    "fingerprints": """
-        CREATE TABLE IF NOT EXISTS fingerprints (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            scan_id TEXT NOT NULL,
-            target TEXT NOT NULL,
-            server TEXT,
-            waf TEXT,
-            cdn TEXT,
-            tech_stack TEXT,
-            frameworks TEXT,
-            cms TEXT,
-            libraries TEXT,
-            databases TEXT,
-            os TEXT,
-            security_rating TEXT,
-            created_at TEXT,
-            FOREIGN KEY (scan_id) REFERENCES scans(scan_id) ON DELETE CASCADE
-        )
-    """,
-}
-
-# Columns that may be missing on older databases, per table.
-# (column_name, column_ddl_type)
-MIGRATIONS: Dict[str, List[tuple]] = {
-    "scans": [
-        ("scan_duration", "REAL"),
-        ("status", "TEXT DEFAULT 'completed'"),
-        ("scan_depth", "INTEGER DEFAULT 1"),
-        ("templates_loaded", "INTEGER DEFAULT 0"),
-        ("requests_sent", "INTEGER DEFAULT 0"),
-        ("errors_count", "INTEGER DEFAULT 0"),
-    ],
-    "findings": [
-        ("confirmed", "BOOLEAN DEFAULT 0"),
-        ("exploit_attempted", "BOOLEAN DEFAULT 0"),
-        ("exploit_success", "BOOLEAN DEFAULT 0"),
-        ("confidence", "REAL DEFAULT 0.0"),
-        ("cwe", "TEXT"),
-        ("owasp", "TEXT"),
-        ("remediation", "TEXT"),
-        ("ai_explanation", "TEXT"),
-        ("created_at", "TEXT"),
-    ],
-    "fingerprints": [
-        ("created_at", "TEXT"),
-    ],
-}
+from datetime import datetime
 
 
-# ---------------------------------------------------------------------------
-# Connection handling
-# ---------------------------------------------------------------------------
+# ============================================================
+# Project root & database path
+# ============================================================
 
-@contextmanager
-def get_connection() -> Iterator[sqlite3.Connection]:
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+DB_PATH = PROJECT_ROOT / "vulnforge.db"
+
+
+# ============================================================
+# Database initialization
+# ============================================================
+
+def init_db():
     """
-    Context-managed SQLite connection with row factory and foreign keys on.
-    Commits on clean exit, rolls back on exception, always closes.
+    Create the VulnForge database tables if they do not exist.
     """
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
+
+    conn = sqlite3.connect(str(DB_PATH))
+
     try:
-        yield conn
+        cur = conn.cursor()
+
+        # ----------------------------------------------------
+        # Scans table
+        # ----------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS scans (
+                scan_id TEXT PRIMARY KEY,
+                target TEXT NOT NULL,
+                timestamp TEXT NOT NULL,
+                start_time TEXT,
+                end_time TEXT,
+                fingerprint TEXT,
+                findings_count INTEGER DEFAULT 0,
+                scan_duration REAL,
+                status TEXT DEFAULT 'completed',
+                scan_depth INTEGER DEFAULT 1,
+                templates_loaded INTEGER DEFAULT 0,
+                requests_sent INTEGER DEFAULT 0,
+                errors_count INTEGER DEFAULT 0
+            )
+        """)
+
+        # ----------------------------------------------------
+        # Findings table
+        # ----------------------------------------------------
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS findings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                scan_id TEXT NOT NULL,
+                template_id TEXT,
+                name TEXT NOT NULL,
+                severity TEXT DEFAULT 'info',
+                impact TEXT,
+                chain TEXT,
+                evidence TEXT,
+                extracted TEXT,
+                confirmed BOOLEAN DEFAULT 0,
+                exploit_attempted BOOLEAN DEFAULT 0,
+                exploit_success BOOLEAN DEFAULT 0,
+                confidence REAL DEFAULT 0.0,
+                cwe TEXT,
+                owasp TEXT,
+                remediation TEXT,
+                created_at TEXT,
+                ai_explanation TEXT,
+                FOREIGN KEY (scan_id)
+                    REFERENCES scans(scan_id)
+                    ON DELETE CASCADE
+            )
+        """)
+
         conn.commit()
-    except Exception:
-        conn.rollback()
-        raise
+
     finally:
         conn.close()
 
 
-def column_exists(cursor: sqlite3.Cursor, table: str, column: str) -> bool:
-    cursor.execute(f"PRAGMA table_info({table})")
-    return column in {row[1] for row in cursor.fetchall()}
+# ============================================================
+# Internal connection helper
+# ============================================================
 
-
-def table_exists(cursor: sqlite3.Cursor, table: str) -> bool:
-    cursor.execute(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?", (table,)
-    )
-    return cursor.fetchone() is not None
-
-
-# ---------------------------------------------------------------------------
-# Schema migration
-# ---------------------------------------------------------------------------
-
-def migrate_schema() -> None:
-    """Create tables if missing and apply additive column migrations."""
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-
-            for stmt in SCHEMA.values():
-                cursor.execute(stmt)
-
-            for table, columns in MIGRATIONS.items():
-                if not table_exists(cursor, table):
-                    continue
-                for col_name, col_type in columns:
-                    if not column_exists(cursor, table, col_name):
-                        cursor.execute(
-                            f"ALTER TABLE {table} ADD COLUMN {col_name} {col_type}"
-                        )
-                        logger.info("Added column '%s' to %s table.", col_name, table)
-
-            logger.debug("Schema migration completed successfully.")
-    except sqlite3.Error:
-        logger.exception("Schema migration failed.")
-        raise
-
-
-def init_db() -> None:
-    """Initialize the database: create tables and apply migrations."""
-    try:
-        migrate_schema()
-        logger.info("Database initialized at %s", DB_PATH)
-    except sqlite3.Error:
-        logger.exception("Database initialization failed.")
-        raise
-
-
-def db_exists() -> bool:
-    return os.path.exists(DB_PATH)
-
-
-def get_db_size() -> int:
-    return os.path.getsize(DB_PATH) if db_exists() else 0
-
-
-# ---------------------------------------------------------------------------
-# AI explanation generation (Ollama)
-# ---------------------------------------------------------------------------
-
-@dataclass
-class ExplanationResult:
-    text: str
-    ok: bool
-    error: Optional[str] = None
-
-
-def explain_finding(finding: Dict[str, Any]) -> ExplanationResult:
+def _connect():
     """
-    Ask a local Ollama model to produce a short, human-readable explanation
-    of a finding: what it is, real-world impact, and a one-line fix.
+    Create a SQLite connection.
 
-    Best-effort: never raises. Returns an empty string on failure so
-    persistence is never blocked by an unavailable/slow LLM.
+    Foreign keys are enabled for this connection.
     """
-    if not AI_EXPLANATIONS_ENABLED:
-        return ExplanationResult(text="", ok=False, error="disabled")
 
-    if requests is None:
-        return ExplanationResult(text="", ok=False, error="requests not installed")
+    conn = sqlite3.connect(str(DB_PATH))
+    conn.execute("PRAGMA foreign_keys = ON")
+    return conn
 
-    prompt = (
-        "You are a security analyst writing a short finding explanation for a "
-        "bug bounty / pentest report. Be precise and avoid filler.\n\n"
-        f"Template: {finding.get('template_id')}\n"
-        f"Name: {finding.get('name')}\n"
-        f"Severity: {finding.get('severity', 'info')}\n"
-        f"Impact: {finding.get('impact')}\n"
-        f"CWE: {finding.get('cwe')}\n"
-        f"OWASP: {finding.get('owasp')}\n\n"
-        "Respond in 3-4 sentences covering: "
-        "1) what this vulnerability is in plain terms, "
-        "2) the realistic impact if exploited, "
-        "3) a one-line remediation. No headings, no preamble."
-    )
+
+# ============================================================
+# Data retrieval functions
+# ============================================================
+
+def get_scans(limit=50):
+    """
+    Return the most recent scans.
+
+    IMPORTANT:
+    sqlite3.Row objects are converted to dictionaries so that
+    dashboard.py can safely use:
+
+        scan.get("scan_id")
+        scan.get("target")
+        scan.get("status")
+    """
+
+    conn = _connect()
 
     try:
-        response = requests.post(
-            OLLAMA_URL,
-            json={"model": OLLAMA_MODEL, "prompt": prompt, "stream": False},
-            timeout=OLLAMA_TIMEOUT,
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT *
+            FROM scans
+            ORDER BY timestamp DESC
+            LIMIT ?
+            """,
+            (limit,)
         )
-        response.raise_for_status()
-        text = (response.json().get("response") or "").strip()
-        return ExplanationResult(text=text, ok=bool(text))
-    except Exception as exc:  # noqa: BLE001 - deliberately broad, best-effort
-        logger.warning(
-            "AI explanation failed for finding '%s': %s", finding.get("name"), exc
-        )
-        return ExplanationResult(text="", ok=False, error=str(exc))
+
+        rows = cur.fetchall()
+
+        # Convert sqlite3.Row -> normal dict
+        return [dict(row) for row in rows]
+
+    finally:
+        conn.close()
 
 
-# ---------------------------------------------------------------------------
+def get_scan(scan_id):
+    """
+    Return a single scan as a normal dictionary.
+
+    Returns:
+        dict if found
+        None if not found
+    """
+
+    conn = _connect()
+
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT *
+            FROM scans
+            WHERE scan_id = ?
+            """,
+            (scan_id,)
+        )
+
+        row = cur.fetchone()
+
+        if row is None:
+            return None
+
+        return dict(row)
+
+    finally:
+        conn.close()
+
+
+def get_findings(limit=100):
+    """
+    Return the most recent findings as dictionaries.
+    """
+
+    conn = _connect()
+
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT
+                id,
+                scan_id,
+                name,
+                severity,
+                evidence,
+                created_at
+            FROM findings
+            ORDER BY id DESC
+            LIMIT ?
+            """,
+            (limit,)
+        )
+
+        rows = cur.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        conn.close()
+
+
+def get_targets():
+    """
+    Return unique targets with the number of scans
+    performed against each target.
+    """
+
+    conn = _connect()
+
+    try:
+        conn.row_factory = sqlite3.Row
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT
+                target,
+                COUNT(*) AS scan_count
+            FROM scans
+            GROUP BY target
+            ORDER BY scan_count DESC
+            """
+        )
+
+        rows = cur.fetchall()
+
+        return [dict(row) for row in rows]
+
+    finally:
+        conn.close()
+
+
+def get_statistics():
+    """
+    Return summary statistics for the dashboard.
+
+    Returns:
+        dict containing:
+            total_scans
+            total_findings
+            unique_targets
+            last_scan_time
+            avg_findings_per_scan
+            severity_counts
+    """
+
+    conn = _connect()
+
+    try:
+        cur = conn.cursor()
+
+        # ----------------------------------------------------
+        # Total scans
+        # ----------------------------------------------------
+        cur.execute("SELECT COUNT(*) FROM scans")
+        total_scans = cur.fetchone()[0]
+
+        # ----------------------------------------------------
+        # Total findings
+        # ----------------------------------------------------
+        cur.execute("SELECT COUNT(*) FROM findings")
+        total_findings = cur.fetchone()[0]
+
+        # ----------------------------------------------------
+        # Unique targets
+        # ----------------------------------------------------
+        cur.execute(
+            "SELECT COUNT(DISTINCT target) FROM scans"
+        )
+        unique_targets = cur.fetchone()[0]
+
+        # ----------------------------------------------------
+        # Last scan timestamp
+        # ----------------------------------------------------
+        cur.execute(
+            """
+            SELECT timestamp
+            FROM scans
+            ORDER BY timestamp DESC
+            LIMIT 1
+            """
+        )
+
+        row = cur.fetchone()
+        last_scan_time = row[0] if row else None
+
+        # ----------------------------------------------------
+        # Average findings per scan
+        # ----------------------------------------------------
+        if total_scans:
+            avg_findings_per_scan = total_findings / total_scans
+        else:
+            avg_findings_per_scan = 0.0
+
+        # ----------------------------------------------------
+        # Findings by severity
+        # ----------------------------------------------------
+        cur.execute(
+            """
+            SELECT
+                severity,
+                COUNT(*) AS count
+            FROM findings
+            GROUP BY severity
+            """
+        )
+
+        severity_rows = cur.fetchall()
+
+        severity_counts = {
+            row[0] or "info": row[1]
+            for row in severity_rows
+        }
+
+        return {
+            "total_scans": total_scans,
+            "total_findings": total_findings,
+            "unique_targets": unique_targets,
+            "last_scan_time": last_scan_time,
+            "avg_findings_per_scan": avg_findings_per_scan,
+            "severity_counts": severity_counts,
+        }
+
+    finally:
+        conn.close()
+
+
+# ============================================================
 # Save scan
-# ---------------------------------------------------------------------------
+# ============================================================
 
 def save_scan(
-    scan_id: str,
-    target: str,
-    fingerprint: Dict[str, Any],
-    findings: List[Dict[str, Any]],
-    start_time: Optional[str] = None,
-    end_time: Optional[str] = None,
-    scan_duration: Optional[float] = None,
-    status: str = "completed",
-    scan_depth: int = 1,
-    templates_loaded: int = 0,
-    requests_sent: int = 0,
-    errors_count: int = 0,
-    generate_explanations: bool = True,
-) -> None:
+    scan_id,
+    target,
+    timestamp,
+    start_time=None,
+    status="completed",
+    **kwargs
+):
     """
-    Persist a scan, its findings, and its fingerprint in a single
-    transaction. Existing findings for the same scan_id are replaced.
+    Insert or replace a scan record.
 
-    If generate_explanations is True and a finding doesn't already carry
-    an 'ai_explanation', one is generated via Ollama before insert.
+    Additional scan fields can be supplied through kwargs.
     """
-    if start_time is None:
-        start_time = datetime.now().isoformat()
-    if end_time is None:
-        end_time = datetime.now().isoformat()
-    if scan_duration is None:
-        try:
-            scan_duration = (
-                datetime.fromisoformat(end_time) - datetime.fromisoformat(start_time)
-            ).total_seconds()
-        except ValueError:
-            scan_duration = 0.0
 
-    now = datetime.now().isoformat()
+    conn = _connect()
 
     try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
+        cur = conn.cursor()
 
-            cursor.execute(
+        cur.execute(
+            """
+            INSERT OR REPLACE INTO scans (
+                scan_id,
+                target,
+                timestamp,
+                start_time,
+                end_time,
+                fingerprint,
+                findings_count,
+                scan_duration,
+                status,
+                scan_depth,
+                templates_loaded,
+                requests_sent,
+                errors_count
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scan_id,
+                target,
+                timestamp,
+                start_time,
+                kwargs.get("end_time"),
+                kwargs.get("fingerprint"),
+                kwargs.get("findings_count", 0),
+                kwargs.get("scan_duration"),
+                status,
+                kwargs.get("scan_depth", 1),
+                kwargs.get("templates_loaded", 0),
+                kwargs.get("requests_sent", 0),
+                kwargs.get("errors_count", 0),
+            )
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# Update scan status
+# ============================================================
+
+def update_scan_status(
+    scan_id,
+    status,
+    end_time=None
+):
+    """
+    Update the status of a scan.
+
+    If end_time is supplied, it is updated as well.
+    """
+
+    conn = _connect()
+
+    try:
+        cur = conn.cursor()
+
+        if end_time:
+            cur.execute(
                 """
-                INSERT OR REPLACE INTO scans (
-                    scan_id, target, timestamp, start_time, end_time,
-                    fingerprint, findings_count, scan_duration, status,
-                    scan_depth, templates_loaded, requests_sent, errors_count
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                UPDATE scans
+                SET
+                    status = ?,
+                    end_time = ?
+                WHERE scan_id = ?
                 """,
                 (
-                    scan_id,
-                    target,
-                    now,
-                    start_time,
-                    end_time,
-                    json.dumps(fingerprint or {}),
-                    len(findings),
-                    scan_duration,
                     status,
-                    scan_depth,
-                    templates_loaded,
-                    requests_sent,
-                    errors_count,
-                ),
-            )
-
-            cursor.execute("DELETE FROM findings WHERE scan_id = ?", (scan_id,))
-
-            for f in findings:
-                evidence = f.get("evidence", {})
-                extracted = f.get("extracted", {})
-
-                ai_explanation = f.get("ai_explanation")
-                if not ai_explanation and generate_explanations:
-                    ai_explanation = explain_finding(f).text
-                ai_explanation = ai_explanation or ""
-
-                cursor.execute(
-                    """
-                    INSERT INTO findings (
-                        scan_id, template_id, name, severity, impact, chain,
-                        evidence, extracted, confirmed, exploit_attempted,
-                        exploit_success, confidence, cwe, owasp, remediation,
-                        ai_explanation, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        scan_id,
-                        f.get("template_id"),
-                        f.get("name"),
-                        f.get("severity", "info"),
-                        f.get("impact"),
-                        f.get("chain"),
-                        json.dumps(evidence),
-                        json.dumps(extracted),
-                        f.get("confirmed", False),
-                        f.get("exploit_attempted", False),
-                        f.get("exploit_success", False),
-                        f.get("confidence", 0.0),
-                        f.get("cwe"),
-                        f.get("owasp"),
-                        f.get("remediation"),
-                        ai_explanation,
-                        now,
-                    ),
+                    end_time,
+                    scan_id,
                 )
-
-            if fingerprint:
-                cursor.execute(
-                    """
-                    INSERT OR REPLACE INTO fingerprints (
-                        scan_id, target, server, waf, cdn, tech_stack,
-                        frameworks, cms, libraries, databases, os, security_rating,
-                        created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    """,
-                    (
-                        scan_id,
-                        target,
-                        fingerprint.get("server"),
-                        json.dumps(fingerprint.get("waf", [])),
-                        json.dumps(fingerprint.get("cdn", [])),
-                        json.dumps(fingerprint.get("tech_stack", [])),
-                        json.dumps(fingerprint.get("frameworks", [])),
-                        json.dumps(fingerprint.get("cms", [])),
-                        json.dumps(fingerprint.get("libraries", [])),
-                        json.dumps(fingerprint.get("databases", [])),
-                        fingerprint.get("os"),
-                        fingerprint.get("security_rating"),
-                        now,
-                    ),
-                )
-
-            logger.info("Saved scan %s with %d findings.", scan_id, len(findings))
-
-    except sqlite3.Error:
-        logger.exception("Failed to save scan %s", scan_id)
-        raise
-
-
-# ---------------------------------------------------------------------------
-# Retrieval
-# ---------------------------------------------------------------------------
-
-def get_scans(limit: int = 20, offset: int = 0) -> List[Dict[str, Any]]:
-    """Retrieve the most recent scans (metadata only, no findings)."""
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT scan_id, target, timestamp, findings_count,
-                       scan_duration, status, start_time, end_time,
-                       templates_loaded, requests_sent, errors_count
-                FROM scans
-                ORDER BY timestamp DESC
-                LIMIT ? OFFSET ?
-                """,
-                (limit, offset),
             )
-            return [dict(row) for row in cursor.fetchall()]
-    except sqlite3.Error:
-        logger.exception("Failed to retrieve scan list.")
-        return []
-
-
-def get_scan(scan_id: str) -> Optional[Dict[str, Any]]:
-    """Retrieve a single scan with its fingerprint and all findings."""
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-
-            cursor.execute("SELECT * FROM scans WHERE scan_id = ?", (scan_id,))
-            row = cursor.fetchone()
-            if not row:
-                logger.warning("Scan ID %s not found.", scan_id)
-                return None
-
-            scan = dict(row)
-            scan["fingerprint"] = json.loads(scan.get("fingerprint") or "{}")
-
-            cursor.execute(
-                "SELECT * FROM fingerprints WHERE scan_id = ?", (scan_id,)
-            )
-            fp_row = cursor.fetchone()
-            if fp_row:
-                scan["fingerprint_detail"] = {
-                    "server": fp_row["server"],
-                    "waf": json.loads(fp_row["waf"] or "[]"),
-                    "cdn": json.loads(fp_row["cdn"] or "[]"),
-                    "tech_stack": json.loads(fp_row["tech_stack"] or "[]"),
-                    "frameworks": json.loads(fp_row["frameworks"] or "[]"),
-                    "cms": json.loads(fp_row["cms"] or "[]"),
-                    "libraries": json.loads(fp_row["libraries"] or "[]"),
-                    "databases": json.loads(fp_row["databases"] or "[]"),
-                    "os": fp_row["os"],
-                    "security_rating": fp_row["security_rating"],
-                }
-
-            cursor.execute(
+        else:
+            cur.execute(
                 """
-                SELECT * FROM findings
+                UPDATE scans
+                SET status = ?
                 WHERE scan_id = ?
-                ORDER BY severity DESC, created_at DESC
                 """,
-                (scan_id,),
+                (
+                    status,
+                    scan_id,
+                )
             )
-            scan["findings"] = []
-            for f in cursor.fetchall():
-                finding = dict(f)
-                finding["evidence"] = json.loads(finding.get("evidence") or "{}")
-                finding["extracted"] = json.loads(finding.get("extracted") or "{}")
-                scan["findings"].append(finding)
 
-            return scan
-    except sqlite3.Error:
-        logger.exception("Failed to retrieve scan %s", scan_id)
-        return None
+        conn.commit()
+
+    finally:
+        conn.close()
 
 
-def get_all_findings(
-    severity: Optional[str] = None, limit: int = 500
-) -> List[Dict[str, Any]]:
-    """Retrieve findings across all scans, optionally filtered by severity."""
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            if severity:
-                cursor.execute(
-                    """
-                    SELECT * FROM findings
-                    WHERE severity = ?
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                    """,
-                    (severity, limit),
-                )
-            else:
-                cursor.execute(
-                    """
-                    SELECT * FROM findings
-                    ORDER BY created_at DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                )
-            results = []
-            for f in cursor.fetchall():
-                finding = dict(f)
-                finding["evidence"] = json.loads(finding.get("evidence") or "{}")
-                finding["extracted"] = json.loads(finding.get("extracted") or "{}")
-                results.append(finding)
-            return results
-    except sqlite3.Error:
-        logger.exception("Failed to retrieve findings.")
-        return []
+# ============================================================
+# Save finding
+# ============================================================
 
-
-def backfill_ai_explanations(limit: int = 100) -> int:
+def save_finding(
+    scan_id,
+    name,
+    severity="info",
+    created_at=None,
+    **kwargs
+):
     """
-    Generate AI explanations for existing findings that don't have one yet.
-    Useful after enabling the feature on a database that already has data.
-    Returns the number of findings updated.
+    Insert a new vulnerability finding.
+
+    Additional finding metadata can be supplied through kwargs.
     """
-    updated = 0
+
+    if created_at is None:
+        created_at = datetime.utcnow().isoformat()
+
+    conn = _connect()
+
     try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute(
-                """
-                SELECT * FROM findings
-                WHERE ai_explanation IS NULL OR ai_explanation = ''
-                LIMIT ?
-                """,
-                (limit,),
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            INSERT INTO findings (
+                scan_id,
+                template_id,
+                name,
+                severity,
+                impact,
+                chain,
+                evidence,
+                extracted,
+                confirmed,
+                exploit_attempted,
+                exploit_success,
+                confidence,
+                cwe,
+                owasp,
+                remediation,
+                created_at,
+                ai_explanation
             )
-            rows = [dict(r) for r in cursor.fetchall()]
-
-        for row in rows:
-            row["evidence"] = json.loads(row.get("evidence") or "{}")
-            row["extracted"] = json.loads(row.get("extracted") or "{}")
-            result = explain_finding(row)
-            if not result.ok:
-                continue
-            with get_connection() as conn:
-                conn.execute(
-                    "UPDATE findings SET ai_explanation = ? WHERE id = ?",
-                    (result.text, row["id"]),
-                )
-            updated += 1
-
-        logger.info("Backfilled AI explanations for %d findings.", updated)
-        return updated
-    except sqlite3.Error:
-        logger.exception("Failed to backfill AI explanations.")
-        return updated
-
-
-# ---------------------------------------------------------------------------
-# Delete / cleanup
-# ---------------------------------------------------------------------------
-
-def delete_scan(scan_id: str) -> bool:
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM scans WHERE scan_id = ?", (scan_id,))
-            if cursor.rowcount == 0:
-                logger.warning("Scan ID %s not found for deletion.", scan_id)
-                return False
-            logger.info("Deleted scan %s", scan_id)
-            return True
-    except sqlite3.Error:
-        logger.exception("Failed to delete scan %s", scan_id)
-        return False
-
-
-def clear_all_scans() -> None:
-    """Delete all scans, findings, and fingerprints. Irreversible."""
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM findings")
-            cursor.execute("DELETE FROM fingerprints")
-            cursor.execute("DELETE FROM scans")
-            logger.warning("All scan data cleared.")
-    except sqlite3.Error:
-        logger.exception("Failed to clear scans.")
-        raise
-
-
-def get_statistics() -> Dict[str, Any]:
-    try:
-        with get_connection() as conn:
-            cursor = conn.cursor()
-            stats: Dict[str, Any] = {}
-
-            cursor.execute("SELECT COUNT(*) FROM scans")
-            stats["total_scans"] = cursor.fetchone()[0]
-
-            cursor.execute("SELECT COUNT(*) FROM findings")
-            stats["total_findings"] = cursor.fetchone()[0]
-
-            cursor.execute("SELECT COUNT(DISTINCT target) FROM scans")
-            stats["unique_targets"] = cursor.fetchone()[0]
-
-            cursor.execute("SELECT severity, COUNT(*) FROM findings GROUP BY severity")
-            stats["severity_counts"] = {row[0]: row[1] for row in cursor.fetchall()}
-
-            cursor.execute(
-                "SELECT AVG(findings_count) FROM scans WHERE findings_count > 0"
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                scan_id,
+                kwargs.get("template_id"),
+                name,
+                severity,
+                kwargs.get("impact"),
+                kwargs.get("chain"),
+                kwargs.get("evidence"),
+                kwargs.get("extracted"),
+                kwargs.get("confirmed", 0),
+                kwargs.get("exploit_attempted", 0),
+                kwargs.get("exploit_success", 0),
+                kwargs.get("confidence", 0.0),
+                kwargs.get("cwe"),
+                kwargs.get("owasp"),
+                kwargs.get("remediation"),
+                created_at,
+                kwargs.get("ai_explanation"),
             )
-            avg = cursor.fetchone()[0]
-            stats["avg_findings_per_scan"] = avg or 0
-
-            stats["db_size"] = get_db_size()
-            return stats
-    except sqlite3.Error:
-        logger.exception("Failed to get statistics.")
-        return {}
-
-
-# ---------------------------------------------------------------------------
-# Export / import
-# ---------------------------------------------------------------------------
-
-def export_scan(scan_id: str, output_file: str) -> bool:
-    scan = get_scan(scan_id)
-    if not scan:
-        return False
-    try:
-        with open(output_file, "w") as f:
-            json.dump(scan, f, indent=2, default=str)
-        logger.info("Exported scan %s to %s", scan_id, output_file)
-        return True
-    except OSError:
-        logger.exception("Failed to export scan %s", scan_id)
-        return False
-
-
-def import_scan(input_file: str) -> Optional[str]:
-    try:
-        with open(input_file, "r") as f:
-            scan_data = json.load(f)
-        scan_id = scan_data.get("scan_id")
-        if not scan_id:
-            raise ValueError("No scan_id found in imported file.")
-        save_scan(
-            scan_id=scan_id,
-            target=scan_data.get("target", ""),
-            fingerprint=scan_data.get("fingerprint", {}),
-            findings=scan_data.get("findings", []),
-            start_time=scan_data.get("start_time"),
-            end_time=scan_data.get("end_time"),
-            generate_explanations=False,  # imported data already has its own
         )
-        logger.info("Imported scan %s from %s", scan_id, input_file)
-        return scan_id
-    except (OSError, json.JSONDecodeError, ValueError, sqlite3.Error):
-        logger.exception("Failed to import scan from %s", input_file)
-        return None
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# Count findings for a scan
+# ============================================================
+
+def count_findings_for_scan(scan_id):
+    """
+    Return the number of findings belonging to a scan.
+    """
+
+    conn = _connect()
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            SELECT COUNT(*)
+            FROM findings
+            WHERE scan_id = ?
+            """,
+            (scan_id,)
+        )
+
+        count = cur.fetchone()[0]
+
+        return count
+
+    finally:
+        conn.close()
+
+
+# ============================================================
+# Optional helper: update findings count
+# ============================================================
+
+def update_findings_count(scan_id):
+    """
+    Synchronize scans.findings_count with the actual number
+    of findings stored for the scan.
+    """
+
+    count = count_findings_for_scan(scan_id)
+
+    conn = _connect()
+
+    try:
+        cur = conn.cursor()
+
+        cur.execute(
+            """
+            UPDATE scans
+            SET findings_count = ?
+            WHERE scan_id = ?
+            """,
+            (
+                count,
+                scan_id,
+            )
+        )
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+    return count
+
+
+# ============================================================
+# Automatic database initialization
+# ============================================================
+
+# Ensure the database and tables exist when this module
+# is imported.
+init_db()

@@ -1,8 +1,0 @@
-Metadata-Version: 2.4
-Name: vulnforge
-Version: 0.1.0
-Requires-Dist: httpx>=0.24.1
-Requires-Dist: pyyaml>=6.0.2
-Requires-Dist: lxml>=4.9.3
-Requires-Dist: rich>=13.0.0
-Dynamic: requires-dist

@@ -1,3 +1,0 @@
-[console_scripts]
-VulnForge = terminal.cli:main
-vulnforge = terminal.cli:main

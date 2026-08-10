@@ -1,44 +1,267 @@
-# Python
-__pycache__/
-*.pyc
+# ============================================================
+
+# VulnForge - Git Ignore
+
+# ============================================================
+
+# ------------------------------------------------------------
+
+# VulnForge local database
+
+# ------------------------------------------------------------
+
+vulnforge.db
+vulnforge-*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.db-wal
+*.db-shm
+
+# ------------------------------------------------------------
+
+# Generated reports and dashboards
+
+# ------------------------------------------------------------
+
+reports/*.html
+reports/*.htm
+reports/*.pdf
+reports/*.json
+reports/*.csv
+reports/*.xml
+
+dashboard.html
+dashboard_*.html
+
+# ------------------------------------------------------------
+
+# Scan output / local results
+
+# ------------------------------------------------------------
+
+results/
+output/
+outputs/
+scan-results/
+scan_results/
+artifacts/
+
+*.scan
+*.report
+
+# ------------------------------------------------------------
+
+# Logs
+
+# ------------------------------------------------------------
+
+*.log
+logs/
+log/
+
+# ------------------------------------------------------------
+
+# Python cache
+
+# ------------------------------------------------------------
+
+**pycache**/
+**/**pycache**/
+
+*.py[cod]
+*$py.class
 *.pyo
 *.pyd
-*.so
-*.dylib
-*.egg-info/
-dist/
-build/
-*.egg
 
-# Virtual environment
+# ------------------------------------------------------------
+
+# Virtual environments
+
+# ------------------------------------------------------------
+
 .venv/
 venv/
 env/
 ENV/
+.env/
+.python-version
 
-# Database files
-*.db
-*.sqlite
-*.sqlite3
+# ------------------------------------------------------------
 
-# Logs and reports
-*.log
-*.html
-*.pdf
-*.csv
-*.json
-reports/
+# Environment / secrets
 
-# IDE
+# ------------------------------------------------------------
+
+.env
+.env.*
+!.env.example
+
+*.pem
+*.key
+*.crt
+
+secrets/
+credentials/
+
+# ------------------------------------------------------------
+
+# IDE / editor files
+
+# ------------------------------------------------------------
+
 .vscode/
 .idea/
 *.swp
 *.swo
+*~
+.project
+.pydevproject
 
-# OS junk
+# ------------------------------------------------------------
+
+# Operating system files
+
+# ------------------------------------------------------------
+
 .DS_Store
+.DS_Store?
 Thumbs.db
+Desktop.ini
 
-# Scanner temporary files
+# ------------------------------------------------------------
+
+# Coverage / testing
+
+# ------------------------------------------------------------
+
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+.tox/
+.nox/
+coverage.xml
+*.cover
+
+# ------------------------------------------------------------
+
+# Build / packaging
+
+# ------------------------------------------------------------
+
+build/
+dist/
+*.egg-info/
+.eggs/
+
+pip-wheel-metadata/
+MANIFEST
+
+# ------------------------------------------------------------
+
+# Temporary files
+
+# ------------------------------------------------------------
+
 *.tmp
-*.cache
+*.temp
+*.bak
+*.backup
+*.old
+*.orig
+
+# ------------------------------------------------------------
+
+# Local development backups
+
+# ------------------------------------------------------------
+
+vulnforge-dev-backup.db
+vulnforge-dev-backup-*.db
+
+# ------------------------------------------------------------
+
+# OS / package manager files
+
+# ------------------------------------------------------------
+
+*.deb
+*.rpm
+
+# ------------------------------------------------------------
+
+# Local dashboard assets
+
+# ------------------------------------------------------------
+
+reports/assets/
+reports/data/
+
+# ------------------------------------------------------------
+
+# Personal development files
+
+# ------------------------------------------------------------
+
+notes-private/
+private/
+.local/
+local/
+scratch/
+tmp/
+temp/
+# ============================================================
+# VulnForge generated reports
+# ============================================================
+
+VulnForge_Report_*.pdf
+vulnforge_summary_report.pdf
+vulnforge_dashboard.html
+
+# Demo generated database
+demo_critical/*.db
+demo_critical/*.sqlite
+demo_critical/*.sqlite3
+
+# Demo generated reports
+demo_critical/*.html
+demo_critical/*.pdf
+*.egg-info/
+
+# VulnForge local database
+vulnforge.db
+*.db
+*.sqlite
+*.sqlite3
+
+# Generated dashboards
+vulnforge_dashboard.html
+vulnforge_summary_report.pdf
+
+# Generated reports
+VulnForge_Report_*.pdf
+output/
+
+# Python environment/cache
+.venv/
+__pycache__/
+**/__pycache__/
+*.pyc
+
+# Packaging artifacts
+*.egg-info/
+
+# VulnForge database and database backups
+vulnforge.db
+vulnforge.db.*
+*.db
+*.sqlite
+*.sqlite3
+
+# VulnForge database and database backups
+vulnforge.db
+vulnforge.db.*
+*.db
+*.sqlite
+*.sqlite3
