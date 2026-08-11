@@ -1,40 +1,40 @@
 #!/usr/bin/env python3
 
 """
-VulnForge CLI
-==============
+VulnForge Command-Line Interface
 
-Command-line interface for VulnForge.
+Responsibilities:
+1. Parse CLI arguments
+2. Load target URLs
+3. Fingerprint targets
+4. Run the VulnForge scanner
+5. Persist results into SQLite
+6. Display findings
+7. Export JSON / CSV
+8. Generate dashboard
+9. Generate PDF reports
+10. Show scan history/details
 
-Main responsibilities:
-    1. Parse CLI arguments
-    2. Load target URLs
-    3. Fingerprint targets
-    4. Run the VulnForge scanner
-    5. Persist scan results into SQLite
-    6. Display findings
-    7. Export JSON / CSV
-    8. Generate dashboard
-    9. Generate PDF reports
-    10. Show scan history/details
+Architecture:
 
-Important architecture rule:
-
+    Target
+       |
+       v
+    Fingerprint
+       |
+       v
     Scanner
        |
        v
-    scan result
+    Scan Result
        |
-       +----> terminal output
+       +----> Terminal
        |
        +----> SQLite
        |
-       +----> dashboard
+       +----> Dashboard
        |
-       +----> JSON/CSV/PDF
-
-The CLI does NOT create fake findings for the dashboard.
-The dashboard should read the same SQLite data written here.
+       +----> JSON / CSV / PDF
 """
 
 # ============================================================
@@ -89,18 +89,14 @@ except ImportError:
 # Fingerprinting
 try:
     from core.fingerprint import fingerprint_target
-
 except ImportError:
-
     fingerprint_target = None
 
 
 # Scanner
 try:
     from engine.scanner import scan_target
-
 except ImportError:
-
     scan_target = None
 
 
@@ -112,9 +108,7 @@ try:
         get_scans,
         get_scan,
     )
-
 except ImportError:
-
     init_db = None
     save_scan = None
     get_scans = None
@@ -137,10 +131,10 @@ def handle_sigint(signum, frame):
     Handle Ctrl+C.
 
     First Ctrl+C:
-        Stop scheduling new work.
+        Stop safely.
 
     Second Ctrl+C:
-        Force exit immediately.
+        Force exit.
     """
 
     if STOP_EVENT.is_set():
@@ -201,15 +195,19 @@ def now():
 
 def normalize_target(url):
     """
-    Normalize a target URL.
+    Normalize target URL.
 
-    Adds https:// when the user supplied only a hostname.
+    Example:
+
+        example.com
+            ->
+        https://example.com
     """
 
     if not url:
         return ""
 
-    url = url.strip()
+    url = str(url).strip()
 
     if not url:
         return ""
@@ -217,7 +215,7 @@ def normalize_target(url):
     if not url.startswith(("http://", "https://")):
         url = "https://" + url
 
-    return url
+    return url.rstrip("/")
 
 
 def load_targets(path):
@@ -241,7 +239,6 @@ def load_targets(path):
     targets = []
 
     try:
-
         with open(
             path,
             "r",
@@ -273,7 +270,6 @@ def load_targets(path):
 
         return []
 
-    # Remove duplicates while preserving order.
     return list(dict.fromkeys(targets))
 
 
@@ -303,21 +299,19 @@ def severity_color(severity):
 
 
 def safe_float(value, default=0.0):
-    """Safely convert a value to float."""
+    """Safely convert value to float."""
 
     try:
         return float(value)
-
     except (TypeError, ValueError):
         return default
 
 
 def safe_int(value, default=0):
-    """Safely convert a value to integer."""
+    """Safely convert value to integer."""
 
     try:
         return int(value)
-
     except (TypeError, ValueError):
         return default
 
@@ -329,9 +323,6 @@ def safe_int(value, default=0):
 def initialize_database():
     """
     Initialize VulnForge SQLite database.
-
-    This is deliberately called before scan persistence and
-    before history/details/dashboard operations.
     """
 
     if init_db is None:
@@ -346,17 +337,11 @@ def persist_scan(result):
     """
     Persist one completed scan.
 
-    IMPORTANT:
-        The findings displayed by the CLI are the same findings
-        sent to SQLite.
-
-    This prevents the common problem where:
-        terminal = findings
-        database = zero findings
-        dashboard = zero findings
+    The same findings shown in the terminal are sent to SQLite.
     """
 
     if save_scan is None:
+
         result["database_error"] = (
             "core.database.save_scan is unavailable."
         )
@@ -366,6 +351,7 @@ def persist_scan(result):
     scan_id = result.get("scan_id")
 
     if not scan_id:
+
         result["database_error"] = (
             "Scanner did not return a scan_id."
         )
@@ -406,6 +392,7 @@ def run_fingerprint(target, quiet=False):
     """Run target fingerprinting."""
 
     if fingerprint_target is None:
+
         return {
             "error": "Fingerprint module unavailable."
         }
@@ -425,6 +412,7 @@ def run_fingerprint(target, quiet=False):
     except Exception as exc:
 
         if not quiet:
+
             print(
                 f"{Fore.YELLOW}"
                 f"[WARN] Fingerprinting failed: {exc}"
@@ -444,11 +432,11 @@ def run_scanner(target, args):
     """
     Execute VulnForge scanner.
 
-    All scanner-specific arguments are collected here so that
-    the rest of the CLI does not need to know scanner internals.
+    Scanner-specific arguments are kept here.
     """
 
     if scan_target is None:
+
         raise RuntimeError(
             "engine.scanner.scan_target could not be imported."
         )
@@ -461,6 +449,7 @@ def run_scanner(target, args):
             proxy_file = args.proxy_file
 
         else:
+
             print(
                 f"{Fore.YELLOW}"
                 f"[WARN] Proxy file not found: "
@@ -493,6 +482,7 @@ def run_scanner(target, args):
     )
 
     if not isinstance(result, dict):
+
         raise RuntimeError(
             "Scanner returned an invalid result."
         )
@@ -507,11 +497,11 @@ def run_scanner(target, args):
 def scan_single_target(target, args):
     """
     Scan one target and persist the result.
-
-    This function is the central scan pipeline.
     """
 
     target = normalize_target(target)
+
+    start_time = now()
 
     result = {
         "url": target,
@@ -521,14 +511,21 @@ def scan_single_target(target, args):
         "error": None,
         "database_error": None,
         "database_saved": False,
-        "timestamp": now(),
-        "start_time": now(),
+        "timestamp": start_time,
+        "start_time": start_time,
         "end_time": None,
+        "request_count": 0,
+        "requests_sent": 0,
+        "templates_loaded": 0,
+        "errors_count": 0,
+        "confirmed_count": 0,
     }
 
     if STOP_EVENT.is_set():
+
         result["error"] = "Scan cancelled."
         result["end_time"] = now()
+
         return result
 
     try:
@@ -554,13 +551,19 @@ def scan_single_target(target, args):
             )
 
         # ----------------------------------------------------
-        # SCAN
+        # STOP CHECK
         # ----------------------------------------------------
 
         if STOP_EVENT.is_set():
+
             result["error"] = "Scan cancelled."
             result["end_time"] = now()
+
             return result
+
+        # ----------------------------------------------------
+        # SCAN
+        # ----------------------------------------------------
 
         if not args.quiet:
 
@@ -577,7 +580,7 @@ def scan_single_target(target, args):
         )
 
         # ----------------------------------------------------
-        # MERGE SCANNER RESULT
+        # SCAN ID
         # ----------------------------------------------------
 
         scanner_scan_id = scan_result.get(
@@ -587,28 +590,116 @@ def scan_single_target(target, args):
         if scanner_scan_id:
             result["scan_id"] = scanner_scan_id
 
+        # ----------------------------------------------------
+        # FINDINGS
+        # ----------------------------------------------------
+
         scanner_findings = scan_result.get(
             "findings",
             [],
         )
 
-        if isinstance(scanner_findings, list):
+        if isinstance(
+            scanner_findings,
+            list,
+        ):
             result["findings"] = scanner_findings
 
-        else:
-            result["findings"] = []
+        # ----------------------------------------------------
+        # FINGERPRINT
+        # ----------------------------------------------------
 
-        # Preserve scanner-provided metadata if present.
-        if scan_result.get("fingerprint"):
+        scanner_fingerprint = scan_result.get(
+            "fingerprint"
+        )
+
+        if scanner_fingerprint:
+
             result["fingerprint"] = (
-                scan_result["fingerprint"]
+                scanner_fingerprint
             )
 
-        if scan_result.get("error"):
-            result["error"] = scan_result["error"]
+        # ----------------------------------------------------
+        # ERROR
+        # ----------------------------------------------------
+
+        scanner_error = scan_result.get(
+            "error"
+        )
+
+        if scanner_error:
+            result["error"] = scanner_error
 
         # ----------------------------------------------------
-        # FINISH TIME
+        # ACCOUNTING
+        # ----------------------------------------------------
+
+        request_count = scan_result.get(
+            "request_count",
+            0,
+        )
+
+        requests_sent = scan_result.get(
+            "requests_sent",
+            request_count,
+        )
+
+        templates_loaded = scan_result.get(
+            "templates_loaded",
+            scan_result.get(
+                "total_templates",
+                0,
+            ),
+        )
+
+        errors_count = scan_result.get(
+            "errors_count",
+            0,
+        )
+
+        confirmed_count = scan_result.get(
+            "confirmed_count"
+        )
+
+        result["request_count"] = safe_int(
+            request_count
+        )
+
+        result["requests_sent"] = safe_int(
+            requests_sent,
+            result["request_count"],
+        )
+
+        result["templates_loaded"] = safe_int(
+            templates_loaded
+        )
+
+        result["errors_count"] = safe_int(
+            errors_count
+        )
+
+        if confirmed_count is None:
+
+            confirmed_count = sum(
+                1
+                for finding in result["findings"]
+                if (
+                    isinstance(finding, dict)
+                    and bool(
+                        finding.get(
+                            "confirmed",
+                            False,
+                        )
+                    )
+                )
+            )
+
+        result["confirmed_count"] = safe_int(
+            confirmed_count
+        )
+
+        # ----------------------------------------------------
+        # END TIME
         # ----------------------------------------------------
 
         result["end_time"] = now()
@@ -645,15 +736,14 @@ def scan_single_target(target, args):
 # ============================================================
 
 def finding_status(finding):
-    """
-    Determine display status.
+    """Determine finding display status."""
 
-    confirmed=True is treated as confirmed.
-
-    Otherwise the finding remains a lead/unconfirmed result.
-    """
-
-    if bool(finding.get("confirmed")):
+    if bool(
+        finding.get(
+            "confirmed",
+            False,
+        )
+    ):
         return "CONFIRMED"
 
     return "UNCONFIRMED"
@@ -667,7 +757,10 @@ def finding_evidence(finding):
         {},
     )
 
-    if isinstance(evidence, dict):
+    if isinstance(
+        evidence,
+        dict,
+    ):
         return evidence
 
     return {}
@@ -684,6 +777,7 @@ def print_fingerprint(fingerprint):
         return
 
     if fingerprint.get("error"):
+
         print(
             f"{Fore.YELLOW}"
             f"Fingerprint warning: "
@@ -718,7 +812,11 @@ def print_fingerprint(fingerprint):
 
     if libraries:
 
-        if isinstance(libraries, list):
+        if isinstance(
+            libraries,
+            list,
+        ):
+
             libraries = ", ".join(
                 str(item)
                 for item in libraries
@@ -757,7 +855,10 @@ def print_findings(findings):
         start=1,
     ):
 
-        if not isinstance(finding, dict):
+        if not isinstance(
+            finding,
+            dict,
+        ):
             continue
 
         severity = str(
@@ -786,10 +887,6 @@ def print_findings(findings):
             )
         )
 
-        status = finding_status(
-            finding
-        )
-
         evidence = finding_evidence(
             finding
         )
@@ -814,6 +911,7 @@ def print_findings(findings):
         )
 
         if confirmed:
+
             status_display = (
                 f"{Fore.GREEN}"
                 f"CONFIRMED"
@@ -821,6 +919,7 @@ def print_findings(findings):
             )
 
         else:
+
             status_display = (
                 f"{Fore.YELLOW}"
                 f"UNCONFIRMED"
@@ -868,7 +967,10 @@ def print_findings(findings):
 # RESULT SUMMARY
 # ============================================================
 
-def print_result_summary(result, elapsed=None):
+def print_result_summary(
+    result,
+    elapsed=None,
+):
     """Print summary for one target."""
 
     if elapsed is None:
@@ -888,6 +990,7 @@ def print_result_summary(result, elapsed=None):
             ).total_seconds()
 
         except Exception:
+
             elapsed = 0.0
 
     findings = result.get(
@@ -926,6 +1029,16 @@ def print_result_summary(result, elapsed=None):
     print(
         f"Findings    : "
         f"{len(findings)}"
+    )
+
+    print(
+        f"Requests    : "
+        f"{result.get('requests_sent', 0)}"
+    )
+
+    print(
+        f"Templates   : "
+        f"{result.get('templates_loaded', 0)}"
     )
 
     if result.get("scan_id"):
@@ -988,9 +1101,7 @@ def show_history(limit=20):
                 "core.database.get_scans unavailable."
             )
 
-        scans = get_scans(
-            limit
-        )
+        scans = get_scans(limit)
 
     except Exception as exc:
 
@@ -1020,7 +1131,10 @@ def show_history(limit=20):
 
     for scan in scans:
 
-        if not isinstance(scan, dict):
+        if not isinstance(
+            scan,
+            dict,
+        ):
             continue
 
         scan_id = scan.get(
@@ -1089,9 +1203,7 @@ def show_scan(scan_id):
                 "core.database.get_scan unavailable."
             )
 
-        scan = get_scan(
-            scan_id
-        )
+        scan = get_scan(scan_id)
 
     except Exception as exc:
 
@@ -1175,9 +1287,7 @@ def save_csv(results, path):
             encoding="utf-8",
         ) as handle:
 
-            writer = csv.writer(
-                handle
-            )
+            writer = csv.writer(handle)
 
             writer.writerow(
                 [
@@ -1276,8 +1386,7 @@ def refresh_dashboard(output_path):
     """
     Refresh dashboard from SQLite.
 
-    The dashboard is generated AFTER scan persistence.
-    Therefore it reads the latest database state.
+    Dashboard generation happens after scan persistence.
     """
 
     try:
@@ -1395,7 +1504,7 @@ def build_parser():
     target_group.add_argument(
         "-u",
         "--url",
-        help="Target URL",
+        help="Target URL or domain",
     )
 
     target_group.add_argument(
@@ -1453,7 +1562,7 @@ def build_parser():
     )
 
     # ========================================================
-    # VERIFICATION / DEEP TESTING
+    # VERIFICATION
     # ========================================================
 
     parser.add_argument(
@@ -1651,15 +1760,10 @@ def build_parser():
 # ============================================================
 
 def validate_args(args):
-    """
-    Validate arguments before starting a scan.
-
-    Returns:
-        True when valid.
-        False otherwise.
-    """
+    """Validate CLI arguments."""
 
     if args.threads < 1:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --threads must be >= 1."
@@ -1669,6 +1773,7 @@ def validate_args(args):
         return False
 
     if args.timeout < 1:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --timeout must be >= 1."
@@ -1678,6 +1783,7 @@ def validate_args(args):
         return False
 
     if args.rate_limit < 0:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --rate-limit cannot be negative."
@@ -1687,6 +1793,7 @@ def validate_args(args):
         return False
 
     if args.delay < 0:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --delay cannot be negative."
@@ -1696,6 +1803,7 @@ def validate_args(args):
         return False
 
     if args.jitter < 0:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --jitter cannot be negative."
@@ -1705,6 +1813,7 @@ def validate_args(args):
         return False
 
     if args.finding_id and not args.scan_id:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --finding-id requires --scan-id."
@@ -1714,6 +1823,7 @@ def validate_args(args):
         return False
 
     if args.pdf and not args.scan_id:
+
         print(
             f"{Fore.RED}"
             "[ERROR] --pdf requires --scan-id."
@@ -1726,10 +1836,13 @@ def validate_args(args):
 
 
 # ============================================================
-# PRINT SCAN CONFIGURATION
+# SCAN CONFIGURATION
 # ============================================================
 
-def print_scan_configuration(args, targets):
+def print_scan_configuration(
+    args,
+    targets,
+):
     """Display scan configuration."""
 
     print(
@@ -1766,15 +1879,15 @@ def print_scan_configuration(args, targets):
 
 
 # ============================================================
-# SCAN MULTIPLE TARGETS
+# MULTIPLE TARGET SCANNING
 # ============================================================
 
-def scan_multiple_targets(targets, args):
+def scan_multiple_targets(
+    targets,
+    args,
+):
     """
     Scan multiple targets.
-
-    The executor is explicitly shut down with wait=False so
-    Ctrl+C does not leave the CLI hanging indefinitely.
     """
 
     results = []
@@ -1795,10 +1908,6 @@ def scan_multiple_targets(targets, args):
 
     try:
 
-        # ----------------------------------------------------
-        # SUBMIT TARGETS
-        # ----------------------------------------------------
-
         for target in targets:
 
             if STOP_EVENT.is_set():
@@ -1811,10 +1920,6 @@ def scan_multiple_targets(targets, args):
             )
 
             futures[future] = target
-
-        # ----------------------------------------------------
-        # COLLECT RESULTS
-        # ----------------------------------------------------
 
         for future in as_completed(
             futures
@@ -1843,12 +1948,8 @@ def scan_multiple_targets(targets, args):
 
             results.append(result)
 
-            if STOP_EVENT.is_set():
-                break
-
     finally:
 
-        # Never wait indefinitely after Ctrl+C.
         executor.shutdown(
             wait=False,
             cancel_futures=True,
@@ -1858,10 +1959,13 @@ def scan_multiple_targets(targets, args):
 
 
 # ============================================================
-# PRINT ALL RESULTS
+# DISPLAY RESULTS
 # ============================================================
 
-def display_results(results, quiet=False):
+def display_results(
+    results,
+    quiet=False,
+):
     """Display scan results."""
 
     if quiet:
@@ -1900,7 +2004,10 @@ def display_results(results, quiet=False):
 # GLOBAL SUMMARY
 # ============================================================
 
-def print_global_summary(results, elapsed):
+def print_global_summary(
+    results,
+    elapsed,
+):
     """Print final scan summary."""
 
     total_targets = len(results)
@@ -1926,12 +2033,15 @@ def print_global_summary(results, elapsed):
             ) or []
         ):
 
-            if isinstance(
-                finding,
-                dict,
-            ) and finding.get(
-                "confirmed",
-                False,
+            if (
+                isinstance(
+                    finding,
+                    dict,
+                )
+                and finding.get(
+                    "confirmed",
+                    False,
+                )
             ):
 
                 confirmed_findings += 1
@@ -2020,7 +2130,7 @@ def main():
         return 2
 
     # --------------------------------------------------------
-    # DATABASE COMMANDS
+    # HISTORY
     # --------------------------------------------------------
 
     if args.history:
@@ -2029,13 +2139,19 @@ def main():
 
         return 0
 
+    # --------------------------------------------------------
+    # PDF
+    # --------------------------------------------------------
+
     if args.pdf:
 
-        generate_pdf_report(
-            args
-        )
+        generate_pdf_report(args)
 
         return 0
+
+    # --------------------------------------------------------
+    # SAVED SCAN
+    # --------------------------------------------------------
 
     if args.scan_id:
 
@@ -2044,6 +2160,10 @@ def main():
         )
 
         return 0
+
+    # --------------------------------------------------------
+    # DASHBOARD
+    # --------------------------------------------------------
 
     if args.dashboard:
 
@@ -2061,8 +2181,10 @@ def main():
 
             return 1
 
-        success, message = refresh_dashboard(
-            args.dashboard_output
+        success, message = (
+            refresh_dashboard(
+                args.dashboard_output
+            )
         )
 
         if success:
@@ -2094,7 +2216,7 @@ def main():
         return 0
 
     # --------------------------------------------------------
-    # INITIALIZE DATABASE BEFORE SCANNING
+    # DATABASE
     # --------------------------------------------------------
 
     try:
@@ -2105,7 +2227,8 @@ def main():
 
         print(
             f"{Fore.RED}"
-            f"[DATABASE ERROR] Could not initialize SQLite:"
+            "[DATABASE ERROR] "
+            f"Could not initialize SQLite:"
             f"{Style.RESET_ALL}"
         )
 
@@ -2125,7 +2248,7 @@ def main():
         print(BANNER)
 
     # --------------------------------------------------------
-    # LOAD TARGETS
+    # TARGETS
     # --------------------------------------------------------
 
     if args.url:
@@ -2148,11 +2271,8 @@ def main():
         if target
     ]
 
-    # Remove duplicates.
     targets = list(
-        dict.fromkeys(
-            targets
-        )
+        dict.fromkeys(targets)
     )
 
     if not targets:
@@ -2170,13 +2290,14 @@ def main():
     # --------------------------------------------------------
 
     if not args.quiet:
+
         print_scan_configuration(
             args,
             targets,
         )
 
     # --------------------------------------------------------
-    # START SCAN
+    # START
     # --------------------------------------------------------
 
     global_start = time.time()
@@ -2210,7 +2331,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # DISPLAY RESULTS
+    # DISPLAY
     # --------------------------------------------------------
 
     display_results(
@@ -2219,7 +2340,7 @@ def main():
     )
 
     # --------------------------------------------------------
-    # GLOBAL SUMMARY
+    # SUMMARY
     # --------------------------------------------------------
 
     elapsed = (
@@ -2263,7 +2384,7 @@ def main():
             )
 
     # --------------------------------------------------------
-    # JSON FILE
+    # JSON
     # --------------------------------------------------------
 
     if args.output:
@@ -2274,7 +2395,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # CSV FILE
+    # CSV
     # --------------------------------------------------------
 
     if args.csv:
@@ -2299,7 +2420,7 @@ def main():
         )
 
     # --------------------------------------------------------
-    # AI NOTICE
+    # AI
     # --------------------------------------------------------
 
     if args.ai:
@@ -2324,8 +2445,8 @@ def main():
 
         print(
             f"{Fore.YELLOW}"
-            "[AI] AI generation is handled by the reporting "
-            "layer, not the CLI."
+            "[AI] AI generation is handled by the "
+            "reporting layer."
             f"{Style.RESET_ALL}"
         )
 

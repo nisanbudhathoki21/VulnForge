@@ -474,6 +474,54 @@ class AuthManager:
         return self.login()
 
 
+
+# ==============================================================
+# REQUEST ACCOUNTING SESSION
+# ==============================================================
+
+class CountingSession(requests.Session):
+    """
+    requests.Session that records every HTTP request.
+
+    The counter is incremented before the request is sent.
+    Exceptions are counted separately.
+
+    This works for:
+        GET
+        POST
+        PUT
+        PATCH
+        DELETE
+        HEAD
+        OPTIONS
+        custom HTTP methods
+    """
+
+    def __init__(self, owner=None):
+        super().__init__()
+
+        self._vulnforge_owner = owner
+
+    def request(self, method, url, **kwargs):
+        owner = self._vulnforge_owner
+
+        if owner is not None:
+            owner.requests_sent += 1
+            owner.request_count += 1
+
+        try:
+            return super().request(
+                method,
+                url,
+                **kwargs,
+            )
+
+        except requests.RequestException:
+            if owner is not None:
+                owner.errors_count += 1
+            raise
+
+
 # ==============================================================
 # SCANNER
 # ==============================================================
@@ -524,6 +572,18 @@ class Scanner:
         self.timeout = timeout
         self.skip_priv = skip_priv
         self.skip_auth = skip_auth
+
+        # --------------------------------------------------------
+        # REQUEST / SCAN ACCOUNTING
+        # --------------------------------------------------------
+        # These counters belong to this Scanner instance.
+        # They are intentionally kept here rather than in the
+        # CLI or database layer so the numbers represent actual
+        # scanner activity.
+        self.requests_sent = 0
+        self.request_count = 0
+        self.errors_count = 0
+        self.confirmed_count = 0
 
         self.last_request_time = 0
 
@@ -576,7 +636,9 @@ class Scanner:
     # ==========================================================
 
     def _get_session(self):
-        session = requests.Session()
+        session = CountingSession(
+            owner=self
+        )
 
         session.headers.update(
             self.waf.get_headers()
@@ -2676,6 +2738,27 @@ class Scanner:
             "raw_signal_count": len(self.findings),
             "total_templates": len(
                 self.templates
+            ),
+
+            # Scanner accounting
+            "requests_sent": int(
+                self.requests_sent
+            ),
+            "request_count": int(
+                self.requests_sent
+            ),
+            "errors_count": int(
+                self.errors_count
+            ),
+            "confirmed_count": int(
+                sum(
+                    1
+                    for finding in deduped_findings
+                    if isinstance(finding, dict)
+                    and bool(
+                        finding.get("confirmed")
+                    )
+                )
             ),
         }
 

@@ -1962,12 +1962,22 @@ def severity_cards(
     for severity in SEVERITY_ORDER:
         cards.append(
             """
-            <div class="severity-card severity-{}">
+            <button
+                type="button"
+                class="severity-card severity-{}"
+                data-severity-card="{}"
+                onclick="filterSeverity('{}')"
+                title="Show {} findings"
+            >
                 <div class="severity-number">{}</div>
                 <div class="severity-name">{}</div>
-            </div>
+                <div class="severity-click-hint">Click to filter</div>
+            </button>
             """.format(
                 esc(severity),
+                esc(severity),
+                esc(severity),
+                esc(severity.upper()),
                 counts.get(severity, 0),
                 esc(severity.upper()),
             )
@@ -2196,6 +2206,34 @@ h1 {
     margin-top: 5px;
 }
 
+.header-actions {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 12px;
+    flex-wrap: wrap;
+}
+
+.pdf-download {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 10px 15px;
+    border-radius: 10px;
+    border: 1px solid var(--blue);
+    background: rgba(56,189,248,.10);
+    color: var(--text);
+    text-decoration: none;
+    font-weight: 700;
+    font-size: 13px;
+    transition: transform .18s ease, background .18s ease;
+}
+
+.pdf-download:hover {
+    background: rgba(56,189,248,.18);
+    transform: translateY(-2px);
+}
+
 .database-pill {
     border: 1px solid var(--border);
     background: rgba(15,23,38,.75);
@@ -2243,6 +2281,164 @@ h1 {
 }
 
 .severity-card {
+    appearance: none;
+    -webkit-appearance: none;
+    position: relative;
+    overflow: hidden;
+    width: 100%;
+    text-align: left;
+    cursor: pointer;
+    font: inherit;
+    color: var(--text);
+
+    border: 1px solid var(--border);
+    border-left: 4px solid var(--sev);
+
+    background:
+        linear-gradient(
+            135deg,
+            var(--sev-bg),
+            var(--panel)
+        );
+
+    transition:
+        transform .18s ease,
+        border-color .18s ease,
+        box-shadow .18s ease;
+}
+
+.severity-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--sev);
+    box-shadow:
+        0 0 0 1px var(--sev),
+        0 10px 30px rgba(0,0,0,.25);
+}
+
+.severity-card:focus-visible {
+    outline: 2px solid var(--sev);
+    outline-offset: 3px;
+}
+
+.severity-card .severity-number {
+    color: var(--sev);
+}
+
+.severity-card .severity-name {
+    color: var(--sev);
+}
+
+.severity-click-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+
+/* Severity-specific colors */
+
+.severity-critical {
+    --sev: #ef4444;
+    --sev-bg: rgba(239, 68, 68, .12);
+}
+
+.severity-high {
+    --sev: #f97316;
+    --sev-bg: rgba(249, 115, 22, .12);
+}
+
+.severity-medium {
+    --sev: #eab308;
+    --sev-bg: rgba(234, 179, 8, .12);
+}
+
+.severity-low {
+    --sev: #22c55e;
+    --sev-bg: rgba(34, 197, 94, .12);
+}
+
+.severity-info {
+    --sev: #64748b;
+    --sev-bg: rgba(100, 116, 139, .12);
+}
+
+
+.severity-card:hover {
+    transform: translateY(-3px);
+    border-color: var(--sev);
+    box-shadow: 0 0 0 1px var(--sev);
+}
+
+.severity-card:focus-visible {
+    outline: 2px solid var(--blue);
+    outline-offset: 3px;
+}
+
+.severity-click-hint {
+    margin-top: 8px;
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: .08em;
+}
+
+
+
+.severity-card-existing .severity-number {
+    color: var(--sev);
+}
+
+.severity-card-existing .severity-name {
+    color: var(--sev);
+}
+
+.severity-card-existing::before {
+    content: "";
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+        linear-gradient(
+            135deg,
+            color-mix(
+                in srgb,
+                var(--sev) 7%,
+                transparent
+            ),
+            transparent 55%
+        );
+}
+
+.severity-card-existing:hover {
+    border-color: var(--sev);
+    box-shadow:
+        0 0 0 1px var(--sev),
+        0 10px 30px rgba(0, 0, 0, .25);
+}
+
+/* Explicit severity colors */
+
+.severity-critical {
+    --sev: #ef4444;
+}
+
+.severity-high {
+    --sev: #f97316;
+}
+
+.severity-medium {
+    --sev: #eab308;
+}
+
+.severity-low {
+    --sev: #22c55e;
+}
+
+.severity-info {
+    --sev: #64748b;
+}
+
     border: 1px solid var(--border);
     background: var(--panel);
     border-radius: 10px;
@@ -2347,6 +2543,21 @@ tr:last-child td {
 .open-report {
     text-decoration: none;
     font-weight: 700;
+}
+
+.clear-filter {
+    border: 1px solid var(--border);
+    background: var(--panel-2);
+    color: var(--text);
+    padding: 9px 13px;
+    border-radius: 9px;
+    cursor: pointer;
+    font: inherit;
+    font-size: 13px;
+}
+
+.clear-filter:hover {
+    border-color: var(--blue);
 }
 
 .controls {
@@ -2907,6 +3118,188 @@ tr:last-child td {
         min-width: 0;
     }
 }
+
+
+/* ============================================================
+   VULNFORGE SEVERITY CARD OVERRIDES
+   Added safely without replacing existing dashboard CSS.
+   ============================================================ */
+
+.severity-grid {
+    display: grid !important;
+    grid-template-columns: repeat(
+        auto-fit,
+        minmax(180px, 1fr)
+    ) !important;
+    gap: 16px !important;
+}
+
+.severity-card {
+    position: relative !important;
+    display: block !important;
+    width: 100% !important;
+    min-height: 145px !important;
+
+    padding: 20px !important;
+
+    border: 2px solid var(--vf-severity-color) !important;
+    border-radius: 16px !important;
+
+    background:
+        linear-gradient(
+            145deg,
+            var(--vf-severity-bg),
+            rgba(15, 23, 42, 0.96)
+        ) !important;
+
+    color: #ffffff !important;
+    text-align: left !important;
+
+    cursor: pointer !important;
+
+    box-shadow:
+        0 8px 24px rgba(0, 0, 0, 0.25),
+        0 0 12px var(--vf-severity-glow) !important;
+
+    transition:
+        transform 0.18s ease,
+        box-shadow 0.18s ease,
+        border-color 0.18s ease !important;
+}
+
+.severity-card:hover {
+    transform: translateY(-4px) !important;
+
+    border-color: var(--vf-severity-color) !important;
+
+    box-shadow:
+        0 14px 35px rgba(0, 0, 0, 0.35),
+        0 0 25px var(--vf-severity-glow) !important;
+}
+
+.severity-card:focus {
+    outline: 2px solid var(--vf-severity-color) !important;
+    outline-offset: 3px !important;
+}
+
+.severity-card::before {
+    content: "" !important;
+
+    position: absolute !important;
+    left: 0 !important;
+    top: 0 !important;
+    bottom: 0 !important;
+
+    width: 5px !important;
+
+    border-radius: 16px 0 0 16px !important;
+
+    background: var(--vf-severity-color) !important;
+}
+
+.severity-card-top {
+    display: flex !important;
+    align-items: center !important;
+    gap: 9px !important;
+}
+
+.severity-icon {
+    display: inline-flex !important;
+
+    align-items: center !important;
+    justify-content: center !important;
+
+    width: 30px !important;
+    height: 30px !important;
+
+    border-radius: 8px !important;
+
+    color: var(--vf-severity-color) !important;
+
+    background:
+        var(--vf-severity-bg-strong) !important;
+
+    font-size: 14px !important;
+    font-weight: 900 !important;
+}
+
+.severity-card .severity-name {
+    color: var(--vf-severity-color) !important;
+
+    font-size: 13px !important;
+    font-weight: 900 !important;
+
+    letter-spacing: 0.08em !important;
+}
+
+.severity-card .severity-number {
+    margin-top: 13px !important;
+
+    color: #ffffff !important;
+
+    font-size: 38px !important;
+    line-height: 1 !important;
+    font-weight: 900 !important;
+}
+
+.severity-filter-hint {
+    margin-top: 13px !important;
+
+    color: #94a3b8 !important;
+
+    font-size: 12px !important;
+    font-weight: 600 !important;
+}
+
+/* CRITICAL */
+
+.severity-card.severity-critical {
+    --vf-severity-color: #ef4444;
+    --vf-severity-bg: rgba(239, 68, 68, 0.13);
+    --vf-severity-bg-strong: rgba(239, 68, 68, 0.22);
+    --vf-severity-glow: rgba(239, 68, 68, 0.30);
+}
+
+/* HIGH */
+
+.severity-card.severity-high {
+    --vf-severity-color: #f97316;
+    --vf-severity-bg: rgba(249, 115, 22, 0.13);
+    --vf-severity-bg-strong: rgba(249, 115, 22, 0.22);
+    --vf-severity-glow: rgba(249, 115, 22, 0.30);
+}
+
+/* MEDIUM */
+
+.severity-card.severity-medium {
+    --vf-severity-color: #eab308;
+    --vf-severity-bg: rgba(234, 179, 8, 0.13);
+    --vf-severity-bg-strong: rgba(234, 179, 8, 0.22);
+    --vf-severity-glow: rgba(234, 179, 8, 0.30);
+}
+
+/* LOW */
+
+.severity-card.severity-low {
+    --vf-severity-color: #22c55e;
+    --vf-severity-bg: rgba(34, 197, 94, 0.13);
+    --vf-severity-bg-strong: rgba(34, 197, 94, 0.22);
+    --vf-severity-glow: rgba(34, 197, 94, 0.30);
+}
+
+/* INFO */
+
+.severity-card.severity-info {
+    --vf-severity-color: #38bdf8;
+    --vf-severity-bg: rgba(56, 189, 248, 0.13);
+    --vf-severity-bg-strong: rgba(56, 189, 248, 0.22);
+    --vf-severity-glow: rgba(56, 189, 248, 0.30);
+}
+
+/* ============================================================
+   END SEVERITY OVERRIDES
+   ============================================================ */
+
 """
 
 
@@ -2993,6 +3386,34 @@ JAVASCRIPT = r"""
             applyFilters
         );
     }
+
+    window.filterSeverity = function (selected) {
+        if (!severity) {
+            return;
+        }
+
+        severity.value = selected || "";
+        applyFilters();
+
+        const findingsSection =
+            document.getElementById("findings");
+
+        if (findingsSection) {
+            findingsSection.scrollIntoView({
+                behavior: "smooth",
+                block: "start"
+            });
+        }
+    };
+
+    window.clearSeverityFilter = function () {
+        if (!severity) {
+            return;
+        }
+
+        severity.value = "";
+        applyFilters();
+    };
 
     applyFilters();
 })();
@@ -3084,9 +3505,23 @@ def dashboard_html(
             </div>
         </div>
 
-        <div class="database-pill">
-            Database:
-            <code>{database}</code>
+        <div class="header-actions">
+
+            <div class="database-pill">
+                Database:
+                <code>{database}</code>
+            </div>
+
+            <a
+                class="pdf-download"
+                href="vulnforge_summary_report.pdf"
+                download
+                target="_blank"
+                rel="noopener"
+            >
+                ↓ Download PDF Report
+            </a>
+
         </div>
 
     </div>
@@ -3221,6 +3656,14 @@ def dashboard_html(
             >
             Confirmed only
         </label>
+
+        <button
+            type="button"
+            class="clear-filter"
+            onclick="clearSeverityFilter()"
+        >
+            Clear Severity Filter
+        </button>
 
     </div>
 
