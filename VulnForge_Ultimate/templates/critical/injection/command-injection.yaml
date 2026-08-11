@@ -1,0 +1,69 @@
+id: vf-crit-command-injection-01
+name: Advanced Command Injection
+severity: critical
+category: Injection
+
+# Rationale for the fix: the original matched on "uid=", "root", "www-data"
+# appearing anywhere in the body. These are common strings that can appear
+# on completely unrelated pages (usernames, doc text, JS bundle contents).
+# The fix uses `echo` with a unique random-looking marker instead of `id`/
+# `whoami` — a string like "vf_cmdi_7f3a9c21" cannot plausibly appear on a
+# real page by coincidence, so its reflection is much stronger evidence
+# that the injected command actually executed.
+
+variables:
+  marker: "vf_cmdi_7f3a9c21"
+
+requests:
+  - id: cmd-semicolon
+    method: GET
+    path: "/?host=127.0.0.1;echo {{marker}}"
+    matchers:
+      - type: word
+        words:
+          - "{{marker}}"
+        part: body
+
+  - id: cmd-and
+    method: GET
+    path: "/?host=127.0.0.1&&echo {{marker}}"
+    matchers:
+      - type: word
+        words:
+          - "{{marker}}"
+        part: body
+
+  - id: cmd-pipe
+    method: GET
+    path: "/?host=127.0.0.1|echo {{marker}}"
+    matchers:
+      - type: word
+        words:
+          - "{{marker}}"
+        part: body
+
+  - id: cmd-backtick
+    method: GET
+    path: "/?host=`echo {{marker}}`"
+    matchers:
+      - type: word
+        words:
+          - "{{marker}}"
+        part: body
+
+  - id: cmd-subshell
+    method: GET
+    path: "/?host=$(echo {{marker}})"
+    matchers:
+      - type: word
+        words:
+          - "{{marker}}"
+        part: body
+
+metadata:
+  payloads:
+    - ";echo {{marker}}"
+    - "&&echo {{marker}}"
+    - "|echo {{marker}}"
+    - "`echo {{marker}}`"
+    - "$(echo {{marker}})"

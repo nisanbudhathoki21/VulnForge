@@ -1,0 +1,101 @@
+id: vf-high-unrestricted-file-upload-01
+
+name: Advanced Unrestricted File Upload Detection
+
+severity: High
+
+category: File Upload
+
+requests:
+
+  - id: upload-php
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: multipart/form-data
+    body: |
+      ------boundary
+      Content-Disposition: form-data; name="file"; filename="shell.php"
+      Content-Type: application/x-php
+
+      <?php echo "VulnForge"; ?>
+      ------boundary--
+    matchers:
+      type: word
+      words:
+        - "upload successful"
+        - "file uploaded"
+        - "success"
+
+  - id: upload-jsp
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: multipart/form-data
+    body: |
+      ------boundary
+      Content-Disposition: form-data; name="file"; filename="shell.jsp"
+      Content-Type: application/octet-stream
+
+      test
+      ------boundary--
+    matchers:
+      type: word
+      words:
+        - "success"
+
+  - id: upload-aspx
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: multipart/form-data
+    body: |
+      ------boundary
+      Content-Disposition: form-data; name="file"; filename="shell.aspx"
+      Content-Type: application/octet-stream
+
+      test
+      ------boundary--
+    matchers:
+      type: word
+      words:
+        - "success"
+
+  - id: upload-html
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: multipart/form-data
+    body: |
+      ------boundary
+      Content-Disposition: form-data; name="file"; filename="xss.html"
+      Content-Type: text/html
+
+      <script>alert(1)</script>
+      ------boundary--
+    matchers:
+      type: word
+      words:
+        - "uploaded"
+
+metadata:
+
+  extensions:
+    - php
+    - php3
+    - php5
+    - phtml
+    - phar
+    - jsp
+    - asp
+    - aspx
+    - cfm
+    - html
+    - svg
+
+  content-types:
+    - application/x-php
+    - application/octet-stream
+    - text/html
+    - image/svg+xml
+

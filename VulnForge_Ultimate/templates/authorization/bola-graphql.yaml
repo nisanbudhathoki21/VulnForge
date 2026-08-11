@@ -1,0 +1,38 @@
+id: bola-graphql
+name: GraphQL Object Authorization Detection
+severity: high
+
+description: >
+  Detects possible broken object-level authorization in GraphQL APIs.
+
+variables:
+  object_id: "1"
+
+requests:
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/api/graphql"
+      - "{{BaseURL}}/v1/graphql"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {
+        "query": "query { user(id: \"{{object_id}}\") { id email } }"
+      }
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"email"\s*:'
+
+    verification:
+      - type: response_difference
+        baseline: true

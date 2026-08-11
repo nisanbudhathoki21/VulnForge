@@ -1,0 +1,68 @@
+id: GIT-EXPOSURE-ADV-01
+name: Advanced Git Repository Exposure & Directory Listing
+severity: low
+category: information-disclosure
+metadata:
+  cwe: CWE-552
+  tags: ["git", "source-code", "exposure", "vcs"]
+
+requests:
+  # Test 1: Validate .git existence
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/HEAD"
+      - "{{BaseURL}}/.git/config"
+      - "{{BaseURL}}/.git/index"
+    matchers:
+      - type: word
+        words:
+          - "ref: refs/heads/"
+          - "[core]"
+          - "repositoryformatversion"
+        part: body
+
+  # Test 2: Backup / Archive Files
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git.zip"
+      - "{{BaseURL}}/.git.tar.gz"
+      - "{{BaseURL}}/.git~"
+      - "{{BaseURL}}/.git.bak"
+    matchers:
+      - type: word
+        words:
+          - "PK"          # ZIP magic bytes
+          - "ustar"       # TAR magic
+        part: body
+
+  # Test 3: Commit History Leak (Emails & Dates)
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/logs/HEAD"
+      - "{{BaseURL}}/.git/logs/refs/heads/main"
+      - "{{BaseURL}}/.git/logs/refs/heads/master"
+    extractors:
+      - type: regex
+        name: author_emails
+        regex:
+          - '[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+    matchers:
+      - type: status
+        status:
+          - 200
+
+  # Test 4: Deep Object Blobs (Partial Download to check for magic)
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/objects/{{Hash}}"
+    payloads:
+      Hash:
+        - "pack/pack-*.idx"
+        - "info/packs"
+        - "e6/9de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    matchers:
+      - type: word
+        words:
+          - "x\x9c"      # zlib compression magic (for blobs)
+          - "blob"
+        part: body

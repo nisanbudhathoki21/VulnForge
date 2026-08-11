@@ -1,0 +1,12 @@
+id: vf-low-server-disclosure
+name: Server Banner Disclosure
+severity: Low
+category: Info-Disclosure
+requests:
+  - method: GET
+    path: "/"
+    matchers:
+      logic: OR
+      rules:
+        - type: regex
+          pattern: "Server: (Apache|nginx|PHP|IIS|Microsoft)/[0-9]"

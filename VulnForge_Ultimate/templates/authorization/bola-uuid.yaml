@@ -1,0 +1,34 @@
+id: bola-uuid
+name: UUID BOLA Detection
+severity: high
+
+description: >
+  Detects possible broken object-level authorization involving UUID
+  identifiers.
+
+variables:
+  test_uuid: "00000000-0000-0000-0000-000000000001"
+
+requests:
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{test_uuid}}"
+      - "{{BaseURL}}/api/accounts/{{test_uuid}}"
+      - "{{BaseURL}}/api/orders/{{test_uuid}}"
+
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"id"\s*:\s*"[^"]+"'
+
+    verification:
+      - type: response_difference
+        baseline: true

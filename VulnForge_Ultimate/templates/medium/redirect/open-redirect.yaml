@@ -1,0 +1,27 @@
+id: open-redirect
+name: Open Redirect Detection
+severity: medium
+
+description: >
+  Detects potential server-side open redirects through common redirect
+  parameters.
+
+variables:
+  redirect_target: "https://example.com"
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/?redirect={{redirect_target}}"
+      - "{{BaseURL}}/?url={{redirect_target}}"
+      - "{{BaseURL}}/?next={{redirect_target}}"
+      - "{{BaseURL}}/?return={{redirect_target}}"
+      - "{{BaseURL}}/?returnUrl={{redirect_target}}"
+
+    matchers:
+      - type: status
+        status: 302
+
+      - type: header
+        name: Location
+        value: "https://example.com"

@@ -1,0 +1,24 @@
+id: unrestricted-file-upload
+name: Unrestricted File Upload – No Extension/Type Validation
+severity: critical
+impact: Attacker can upload executable script files (.py, .sh, etc.) with no extension or content-type validation, which may lead to remote code execution if the upload directory is web-servable.
+requests:
+  - method: POST
+    path:
+      - "{{BaseURL}}/upload"
+    headers:
+      Content-Type: "multipart/form-data; boundary=vftboundary123"
+    body: |-
+      --vftboundary123
+      Content-Disposition: form-data; name="file"; filename="vf_test_payload.py"
+      Content-Type: text/x-python
+
+      # harmless marker file uploaded by template
+      --vftboundary123--
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "vf_test_payload.py"

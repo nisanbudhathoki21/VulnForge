@@ -1,0 +1,14 @@
+id: vf-high-cors-01
+name: Dangerous CORS Wildcard
+severity: High
+category: Access-Control
+requests:
+  - method: GET
+    path: "/"
+    headers:
+      Origin: "https://evil-attacker.com"
+    matchers:
+      logic: AND
+      rules:
+        - type: regex
+          pattern: "Access-Control-Allow-Origin: https://evil-attacker.com"

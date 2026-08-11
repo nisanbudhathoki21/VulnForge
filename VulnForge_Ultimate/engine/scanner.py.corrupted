@@ -1,0 +1,179 @@
+def load_templates(self) -> List[Dict[str, Any]]:
+    """
+    Discover and load active VulnForge templates.
+
+    Disabled template directories are excluded explicitly.
+
+    Active:
+        templates/**/*.yaml
+        templates/**/*.yml
+
+    Ignored:
+        templates/_disabled/**
+        templates/_disabled_templates/**
+        templates/.disabled/**
+        templates/.git/**
+        templates/__pycache__/**
+    """
+
+    self.templates = []
+
+    if not self.template_dir.exists():
+        self._log(
+            "[WARN] Template directory not found: "
+            f"{self.template_dir}"
+        )
+        return self.templates
+
+    disabled_dirs = {
+        "_disabled",
+        "_disabled_templates",
+        ".disabled",
+        ".git",
+        "__pycache__",
+    }
+
+    template_files = set()
+
+    for pattern in ("*.yaml", "*.yml"):
+        for path in self.template_dir.rglob(pattern):
+
+            if not path.is_file():
+                continue
+
+            try:
+                relative = path.relative_to(
+                    self.template_dir
+                )
+            except ValueError:
+                continue
+
+            directory_parts = relative.parts[:-1]
+
+            # Never load templates from disabled directories.
+            if any(
+                part in disabled_dirs
+                for part in directory_parts
+            ):
+                self._log(
+                    "[SKIP] Disabled template: "
+                    f"{path}"
+                )
+                continue
+
+            template_files.add(path)
+
+    files = sorted(template_files)
+
+    self._log(
+        "[INFO] Active template files discovered: "
+        f"{len(files)}"
+    )
+
+    loaded_ids = set()
+
+    for path in files:
+
+        try:
+            raw = path.read_text(
+                encoding="utf-8"
+            )
+
+        except OSError as exc:
+
+            logger.warning(
+                "Unable to read template %s: %s",
+                path,
+                exc,
+            )
+
+            self._log(
+                "[ERROR] Unable to read: "
+                f"{path}: {exc}"
+            )
+
+            continue
+
+        try:
+            data = yaml.safe_load(raw)
+
+        except yaml.YAMLError as exc:
+
+            logger.warning(
+                "Invalid YAML %s: %s",
+                path,
+                exc,
+            )
+
+            self._log(
+                "[ERROR] Invalid YAML: "
+                f"{path}: {exc}"
+            )
+
+            continue
+
+        if not isinstance(data, dict):
+
+            self._log(
+                "[SKIP] Template is not a mapping: "
+                f"{path}"
+            )
+
+            continue
+
+        template = self._normalize_template(
+            data,
+            path,
+        )
+
+        if template is None:
+
+            self._log(
+                "[SKIP] Template normalization failed: "
+                f"{path}"
+            )
+
+            continue
+
+        template_id = str(
+            template.get("id", "")
+        ).strip()
+
+        if not template_id:
+
+            self._log(
+                "[SKIP] Template has no ID: "
+                f"{path}"
+            )
+
+            continue
+
+        if template_id in loaded_ids:
+
+            self._log(
+                "[SKIP] Duplicate template ID: "
+                f"{template_id} ({path})"
+            )
+
+            continue
+
+        loaded_ids.add(template_id)
+
+        # Keep source information available for debugging,
+        # reporting, and future template-management features.
+        template["_source_path"] = str(path)
+
+        self.templates.append(template)
+
+        self._log(
+            "[LOADED] "
+            f"{template_id} "
+            f"← {path}"
+        )
+
+    self._log(
+        "[+] Active templates loaded: "
+        f"{len(self.templates)}"
+    )
+
+    return self.templates

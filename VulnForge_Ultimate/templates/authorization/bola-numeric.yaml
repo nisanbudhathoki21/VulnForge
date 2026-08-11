@@ -1,0 +1,42 @@
+id: bola-numeric
+name: Numeric ID BOLA Detection
+severity: high
+
+description: >
+  Detects possible broken object-level authorization when an authenticated
+  user can access another numeric object identifier.
+
+impact: >
+  An unauthorized user may access another user's object.
+
+variables:
+  own_id: 100
+
+requests:
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{own_id|int+1}}"
+
+    headers:
+      Accept: application/json
+
+    matchers-condition: and
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: header
+        name: Content-Type
+        value: application/json
+
+      - type: regex
+        part: body
+        regex:
+          - '"id"\s*:\s*[0-9]+'
+
+    extractors:
+      - type: json
+        name: object_id
+        json:
+          - "$.id"

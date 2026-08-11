@@ -1,0 +1,160 @@
+id: BOLA-ULTIMATE-01
+name: Ultimate BOLA Detection
+severity: critical
+category: api-security
+
+description: >
+  Detects potential broken object-level authorization across common
+  HTTP object access patterns.
+
+impact: >
+  Successful exploitation may expose another user's object or account data.
+
+variables:
+  test_id: "2"
+  test_uuid: "00000000-0000-0000-0000-000000000001"
+
+requests:
+
+  # ================================================================
+  # Numeric object identifiers
+  # ================================================================
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/orders/{{test_id}}"
+      - "{{BaseURL}}/api/accounts/{{test_id}}"
+      - "{{BaseURL}}/api/profiles/{{test_id}}"
+
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"id"\s*:\s*[0-9]+'
+
+    verification:
+      - type: response_difference
+        baseline: true
+
+  # ================================================================
+  # UUID object identifiers
+  # ================================================================
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/users/{{test_uuid}}"
+      - "{{BaseURL}}/api/orders/{{test_uuid}}"
+      - "{{BaseURL}}/api/accounts/{{test_uuid}}"
+
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"id"\s*:\s*"[^"]+"'
+
+    verification:
+      - type: response_difference
+        baseline: true
+
+  # ================================================================
+  # POST object access
+  # ================================================================
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/orders/{{test_id}}"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {}
+
+    matchers:
+      - type: status
+        status: 200
+
+  # ================================================================
+  # PUT object access
+  # ================================================================
+
+  - method: PUT
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/profiles/{{test_id}}"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {}
+
+    matchers:
+      - type: status
+        status: 200
+
+  # ================================================================
+  # PATCH object access
+  # ================================================================
+
+  - method: PATCH
+    path:
+      - "{{BaseURL}}/api/users/{{test_id}}"
+      - "{{BaseURL}}/api/profiles/{{test_id}}"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {}
+
+    matchers:
+      - type: status
+        status: 200
+
+  # ================================================================
+  # GraphQL object access
+  # ================================================================
+
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+
+    headers:
+      Content-Type: application/json
+      Accept: application/json
+
+    body: |
+      {
+        "query": "query { user(id: \"{{test_id}}\") { id email } }"
+      }
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"email"\s*:'
+
+    verification:
+      - type: response_difference
+        baseline: true

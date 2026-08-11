@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>VulnForge Ultimate v3.3 - Web Security Workstation</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body class="bg-[#090d16] text-slate-100 min-h-screen flex flex-col">
+  <header class="py-3.5 px-6 border-b border-slate-800 bg-slate-900/80 sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="h-8 w-8 rounded bg-cyan-500 flex items-center justify-center font-black text-black text-sm">VF</div>
+        <h1 class="text-base font-black tracking-wider text-slate-100">VULNFORGE <span class="text-cyan-400 font-mono text-xs px-1.5 py-0.5 rounded bg-cyan-950 border border-cyan-800">ULTIMATE v3.3</span></h1>
+      </div>
+      <div class="flex items-center gap-2">
+        <button onclick="switchTab('repeater')" class="btn btn-dark btn-sm text-cyan-300">Live Repeater</button>
+        <button onclick="switchTab('console')" class="btn btn-dark btn-sm text-slate-300">Live Console</button>
+      </div>
+    </div>
+  </header>
+
+  <main class="max-w-7xl mx-auto px-6 py-6 flex-1 w-full space-y-6">
+    <div class="grid grid-cols-2 md:grid-cols-6 gap-3.5">
+      <div class="stat-card"><div class="text-[11px] font-bold text-slate-400 uppercase">Total Scans</div><div id="stat-total-scans" class="text-2xl font-black font-mono">0</div></div>
+      <div class="stat-card"><div class="text-[11px] font-bold text-slate-400 uppercase">Total Findings</div><div id="stat-total-findings" class="text-2xl font-black text-cyan-400 font-mono">0</div></div>
+      <div class="stat-card border-emerald-900/60 bg-emerald-950/20"><div class="text-[11px] font-bold text-emerald-400 uppercase">Confirmed Bugs</div><div id="stat-confirmed-findings" class="text-2xl font-black text-emerald-300 font-mono">0</div></div>
+      <div class="stat-card"><div class="text-[11px] font-bold text-slate-400 uppercase">HTTP Requests</div><div id="stat-total-requests" class="text-2xl font-black text-sky-300 font-mono">0</div></div>
+      <div class="stat-card"><div class="text-[11px] font-bold text-slate-400 uppercase">Unique Targets</div><div id="stat-unique-targets" class="text-2xl font-black font-mono">0</div></div>
+      <div class="stat-card"><div class="text-[11px] font-bold text-slate-400 uppercase">Avg Findings</div><div id="stat-avg-findings" class="text-2xl font-black font-mono">0.0</div></div>
+    </div>
+
+    <div class="bg-slate-900/80 border border-slate-800 rounded-lg p-3 flex items-center justify-between text-xs font-mono">
+      <span class="text-slate-400 font-bold uppercase">Severity Distribution:</span>
+      <div class="flex gap-2">
+        <span class="px-2 py-0.5 rounded bg-red-950 text-red-300 border border-red-800">CRITICAL: <b id="count-crit">0</b></span>
+        <span class="px-2 py-0.5 rounded bg-orange-950 text-orange-300 border border-orange-800">HIGH: <b id="count-high">0</b></span>
+        <span class="px-2 py-0.5 rounded bg-amber-950 text-amber-300 border border-amber-800">MEDIUM: <b id="count-med">0</b></span>
+        <span class="px-2 py-0.5 rounded bg-blue-950 text-blue-300 border border-blue-800">LOW: <b id="count-low">0</b></span>
+        <span class="px-2 py-0.5 rounded bg-slate-800 text-slate-300 border border-slate-700">INFO: <b id="count-info">0</b></span>
+      </div>
+    </div>
+
+    <div class="bg-slate-900 border border-cyan-900/50 rounded-lg p-4">
+      <form onsubmit="handleLaunchScan(event)" class="flex gap-3">
+        <input type="text" id="scan-target-url" value="http://127.0.0.1:3000" placeholder="Target URL (e.g. http://127.0.0.1:3000)" class="flex-1 bg-black border border-slate-700 focus:border-cyan-500 rounded px-3.5 py-2 text-sm text-slate-100 font-mono outline-none">
+        <button type="submit" class="btn btn-primary">Launch Live Scan</button>
+      </form>
+    </div>
+
+    <div class="border-b border-slate-800 flex gap-1">
+      <button class="nav-tab active" data-tab="findings">Findings & Evidence</button>
+      <button class="nav-tab" data-tab="scans">Scan Audits</button>
+      <button class="nav-tab" data-tab="repeater">Live Burp Repeater</button>
+      <button class="nav-tab" data-tab="console">Live Console Stream</button>
+    </div>
+
+    <div id="tab-findings" class="tab-pane space-y-4">
+      <div class="flex items-center justify-between text-xs bg-slate-900/60 p-3 rounded border border-slate-800">
+        <div class="flex items-center gap-3">
+          <select id="filter-severity" class="bg-black border border-slate-700 text-slate-200 text-xs rounded py-1 px-2 font-mono outline-none">
+            <option value="ALL">ALL SEVERITIES</option>
+            <option value="CRITICAL">CRITICAL</option>
+            <option value="HIGH">HIGH</option>
+            <option value="MEDIUM">MEDIUM</option>
+            <option value="LOW">LOW</option>
+          </select>
+          <label class="flex items-center gap-1.5 cursor-pointer text-emerald-400 font-mono">
+            <input type="checkbox" id="filter-confirmed" class="accent-emerald-500"> 100% Confirmed Only
+          </label>
+        </div>
+        <div class="text-slate-400 font-mono">Showing <b id="visible-findings-count" class="text-cyan-400">0</b> findings</div>
+      </div>
+      <div id="findings-container"></div>
+    </div>
+
+    <div id="tab-scans" class="tab-pane hidden space-y-4">
+      <div class="bg-slate-900 border border-slate-800 rounded-lg overflow-hidden">
+        <table class="w-full text-left font-mono text-xs">
+          <thead class="bg-black text-slate-400 border-b border-slate-800">
+            <tr><th class="py-3 px-4">Scan ID</th><th class="py-3 px-4">Target URL</th><th class="py-3 px-4">Status</th><th class="py-3 px-4">Findings</th><th class="py-3 px-4">Requests</th><th class="py-3 px-4">Duration</th><th class="py-3 px-4 text-right">Reports</th></tr>
+          </thead>
+          <tbody id="scans-table-body"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="tab-repeater" class="tab-pane hidden space-y-4">
+      <div class="grid grid-cols-1 lg:grid-cols-4 gap-4">
+        <div class="lg:col-span-1 bg-slate-900 border border-slate-800 rounded p-3">
+          <div class="text-xs font-bold text-slate-400 uppercase mb-2">Repeater Probes</div>
+          <div id="repeater-history-list" class="max-h-[500px] overflow-y-auto space-y-1"></div>
+        </div>
+        <div class="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div class="bg-slate-900 border border-slate-800 rounded p-4 flex flex-col">
+            <div class="text-xs font-bold text-sky-400 uppercase mb-2">Raw HTTP Request</div>
+            <textarea id="repeater-raw-request" rows="16" class="w-full bg-black border border-slate-800 text-slate-200 font-mono text-xs p-3 rounded outline-none focus:border-cyan-500 resize-none flex-1">GET / HTTP/1.1
+Host: localhost:3000
+User-Agent: VulnForge/3.3
+Connection: close
+
+</textarea>
+            <button id="btn-repeater-send" class="btn btn-primary btn-sm mt-3">Send HTTP Request</button>
+          </div>
+          <div class="bg-slate-900 border border-slate-800 rounded p-4 flex flex-col">
+            <div class="flex items-center justify-between text-xs font-bold text-emerald-400 uppercase mb-2">
+              <span>Wire Response</span>
+              <span id="repeater-latency" class="text-slate-400">0.0 ms</span>
+            </div>
+            <div id="repeater-raw-response" class="raw-http-box flex-1 min-h-[340px]">[Click 'Send' to dispatch live probe]</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="tab-console" class="tab-pane hidden space-y-4">
+      <div class="bg-slate-900 border border-slate-800 rounded p-4">
+        <div class="text-sm font-bold text-slate-200 uppercase mb-2 flex items-center gap-2"><span class="w-2 h-2 rounded-full bg-cyan-400 animate-ping"></span> Live Scanner Stream</div>
+        <div id="live-terminal-output" class="terminal-window"><div class="terminal-line SYSTEM">[VulnForge Console] Engine idle. Ready for scans.</div></div>
+      </div>
+    </div>
+  </main>
+
+  <div id="finding-modal" class="modal-overlay hidden">
+    <div class="modal-content">
+      <div class="p-4 bg-slate-900 border-b border-slate-800 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span id="modal-severity-badge" class="badge badge-critical">CRITICAL</span>
+          <h3 id="modal-title" class="text-base font-bold text-slate-100">Finding</h3>
+        </div>
+        <button onclick="closeFindingModal()" class="text-slate-400 hover:text-white">&times;</button>
+      </div>
+      <div class="p-6 overflow-y-auto space-y-4 max-h-[75vh]">
+        <div class="bg-black p-3 rounded text-xs font-mono text-slate-300 grid grid-cols-2 gap-2">
+          <div><b class="text-slate-500">CVSS:</b> <span id="modal-cvss"></span></div>
+          <div><b class="text-slate-500">Endpoint:</b> <span id="modal-endpoint" class="text-cyan-400"></span></div>
+        </div>
+        <div><h4 class="text-xs font-bold text-slate-400 uppercase">Summary</h4><p id="modal-description" class="text-sm text-slate-300"></p></div>
+        <div><h4 class="text-xs font-bold text-red-400 uppercase">Impact</h4><p id="modal-impact" class="text-sm text-slate-300"></p></div>
+        <div><h4 class="text-xs font-bold text-emerald-400 uppercase">Verification Proof</h4><div id="modal-proof" class="bg-emerald-950/20 border border-emerald-800 p-2.5 rounded text-xs font-mono text-emerald-300"></div></div>
+        <div class="grid grid-cols-2 gap-3">
+          <div><h4 class="text-xs font-bold text-sky-400 uppercase mb-1">Raw Request</h4><div id="modal-raw-request" class="raw-http-box max-h-60"></div></div>
+          <div><h4 class="text-xs font-bold text-emerald-400 uppercase mb-1">Raw Response</h4><div id="modal-raw-response" class="raw-http-box max-h-60"></div></div>
+        </div>
+        <div><h4 class="text-xs font-bold text-cyan-400 uppercase">Remediation</h4><p id="modal-remediation" class="text-sm text-slate-300 bg-slate-950 p-3 rounded"></p></div>
+      </div>
+      <div class="p-3 bg-slate-900 border-t border-slate-800 text-right"><button onclick="closeFindingModal()" class="btn btn-dark btn-sm">Close</button></div>
+    </div>
+  </div>
+  <script src="/static/app.js"></script>
+</body>
+</html>

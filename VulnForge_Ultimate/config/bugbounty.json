@@ -1,0 +1,42 @@
+{
+  "scan": {
+    "threads": 20,
+    "timeout": 15,
+    "delay": 0.0,
+    "rate_limit": 0,
+    "max_depth": 2,
+    "max_urls": 200,
+    "severity_filter": ["critical","high","medium","low"],
+    "enable_crawler": true,
+    "enable_nikto_checks": true,
+    "stealth_mode": false
+  },
+  "scope": {
+    "in_scope": ["*.example.com"],
+    "out_scope": ["admin.example.com"],
+    "respect_scope_strictly": true
+  },
+  "bugbounty": {
+    "platform": "hackerone",
+    "report_template": "hackerone_markdown",
+    "include_curl_poc": true,
+    "include_impact": true,
+    "chains_enabled": true,
+    "auto_estimate_bounty": true
+  },
+  "correlation": {
+    "enabled": true,
+    "chains": [
+      "auth_bola_takeover",
+      "xss_csp_hijack",
+      "ssrf_cloud_takeover",
+      "sqli_rce",
+      "lfi_rce",
+      "oauth_theft",
+      "cors_idor_leak",
+      "info_secrets",
+      "graphql_bola",
+      "csrf_mass_privesc"
+    ]
+  }
+}

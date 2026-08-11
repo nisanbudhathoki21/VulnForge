@@ -1,0 +1,90 @@
+id: git-exposure-god
+name: Git Repository Exposure – God Level
+severity: low
+impact: Source code, credentials in commit history, and internal documentation can be exposed.
+chain: Extract commit hashes and clone the repository.
+
+requests:
+  # 1. Check .git/HEAD
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/HEAD"
+      - "{{BaseURL}}/.git/config"
+      - "{{BaseURL}}/.git/index"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: word
+        part: body
+        words:
+          - "ref: refs/heads/"
+          - "[core]"
+      - type: word
+        part: body
+        negative: true
+        words:
+          - "<html"
+    extractors:
+      - type: regex
+        name: commit_hash
+        regex:
+          - '[a-f0-9]{40}'
+
+  # 2. .git/logs/HEAD (commit history)
+  - method: GET
+    path:
+      - "{{BaseURL}}/.git/logs/HEAD"
+      - "{{BaseURL}}/.git/logs/refs/heads/main"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: regex
+        part: body
+        regex:
+          - '[a-f0-9]{40}\s+[a-f0-9]{40}'
+
+  # 3. .gitignore (exposed ignored files)
+  - method: GET
+    path:
+      - "{{BaseURL}}/.gitignore"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: word
+        part: body
+        words:
+          - ".env"
+          - "*.log"
+          - "secrets"
+
+verification:
+  # Confirm actual Git content: HEAD file must contain a ref
+  - method: GET
+    path: "{{BaseURL}}/.git/HEAD"
+    matchers:
+      - type: status
+        status: 200
+      - type: header
+        name: Content-Type
+        value: text/plain
+      - type: regex
+        part: body
+        regex:
+          - 'ref: refs/heads/\w+'
+
+exploitation:
+  # Attempt to read a specific object (use extracted hash)
+  - method: GET
+    path: "{{BaseURL}}/.git/objects/{{commit_hash[:2]}}/{{commit_hash[2:]}}"
+    extract:
+      type: status
+      expected: 200

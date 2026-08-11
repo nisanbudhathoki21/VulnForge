@@ -1,0 +1,45 @@
+id: OAUTH-ADV-01
+name: Advanced OAuth Misconfiguration (Redirect Bypass & Code Exposure)
+severity: high
+category: authentication
+metadata:
+  cwe: CWE-601, CWE-287
+  tags: ["oauth", "open-redirect", "csrf", "misconfiguration"]
+
+requests:
+  # Test 1: Redirect Bypass via Linebreak / Query string pollution
+  - method: GET
+    path:
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}%0d%0a//evil.com&response_type=code"
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}?evil.com&response_type=code"
+    matchers:
+      - type: status
+        status:
+          - 302
+      - type: word
+        words:
+          - "Location: http://evil.com"
+          - "Location: https://evil.com"
+        part: header
+
+  # Test 2: Deprecated Implicit Flow (response_type=token) with missing state
+  - method: GET
+    path:
+      - "{{BaseURL}}/oauth/authorize?client_id=test&redirect_uri={{BaseURL}}/callback&response_type=token&scope=openid"
+    matchers:
+      - type: word
+        words:
+          - "access_token"
+          - "id_token"
+        part: body
+    extractors:
+      - type: regex
+        name: access_token
+        regex:
+          - 'access_token=([^&]+)'
+    matchers-condition: and
+    matchers:
+      - type: word
+        negative: true
+        words:
+          - "state"

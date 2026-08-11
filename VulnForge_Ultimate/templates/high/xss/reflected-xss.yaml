@@ -1,0 +1,63 @@
+id: vf-high-reflected-xss-01
+
+name: Advanced Reflected XSS Detection
+
+severity: High
+
+category: XSS
+
+requests:
+
+  - id: xss-script
+    method: GET
+    path: "/?q=<script>alert(1)</script>"
+    matchers:
+      type: word
+      words:
+        - "<script>alert(1)</script>"
+
+  - id: xss-img
+    method: GET
+    path: "/?q=<img src=x onerror=alert(1)>"
+    matchers:
+      type: word
+      words:
+        - "<img src=x onerror=alert(1)>"
+
+  - id: xss-svg
+    method: GET
+    path: "/?q=<svg onload=alert(1)>"
+    matchers:
+      type: word
+      words:
+        - "<svg onload=alert(1)>"
+
+  - id: xss-body
+    method: GET
+    path: "/?q=<body onload=alert(1)>"
+    matchers:
+      type: word
+      words:
+        - "<body onload=alert(1)>"
+
+  - id: xss-input
+    method: GET
+    path: "/?search=\"'><script>alert(1)</script>"
+    matchers:
+      type: word
+      words:
+        - "<script>alert(1)</script>"
+
+metadata:
+
+  parameters:
+    - q
+    - query
+    - search
+    - keyword
+    - s
+    - term
+    - text
+    - message
+    - comment
+    - name

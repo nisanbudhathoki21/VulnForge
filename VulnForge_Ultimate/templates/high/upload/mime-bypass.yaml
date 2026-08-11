@@ -1,0 +1,48 @@
+id: vf-high-mime-bypass-01
+
+name: MIME Type Bypass Detection
+
+severity: High
+
+category: File Upload
+
+requests:
+
+  - id: mime-php-jpeg
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: image/jpeg
+    body: "GIF89a<?php echo 'VulnForge'; ?>"
+    matchers:
+      type: word
+      words:
+        - "upload"
+        - "success"
+
+  - id: mime-svg
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: image/svg+xml
+    body: "<svg></svg>"
+    matchers:
+      type: word
+      words:
+        - "upload"
+
+  - id: mime-octet
+    method: POST
+    path: "/upload"
+    headers:
+      Content-Type: application/octet-stream
+    body: "TEST"
+    matchers:
+      type: word
+      words:
+        - "success"
+
+metadata:
+
+  description:
+    Detect MIME type validation bypass.

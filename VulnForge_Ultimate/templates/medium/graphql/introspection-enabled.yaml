@@ -1,0 +1,50 @@
+id: GRAPHQL-ADV-01
+name: Advanced GraphQL Introspection & Resource Exhaustion
+severity: high
+category: graphql
+metadata:
+  cwe: CWE-200, CWE-400
+  tags: ["graphql", "introspection", "batching", "dos"]
+
+requests:
+  # Test 1: Deep Introspection via __type (bypassing schema guards)
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+      - "{{BaseURL}}/v1/graphql"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "query": "query { __type(name:\"User\") { name fields { name type { name } } } __type(name:\"Mutation\") { name fields { name } } }"
+      }
+    matchers:
+      - type: word
+        words:
+          - '"type": "User"'
+          - '"type": "Mutation"'
+        part: body
+
+  # Test 2: Alias Batching (Resource Drain / DoS)
+  - method: POST
+    path:
+      - "{{BaseURL}}/graphql"
+    headers:
+      Content-Type: "application/json"
+    body: |
+      {
+        "query": "query { __schema { types { name } } }",
+        "operationName": null
+      }
+    # Send 100 aliased introspection fields in one go (if engine supports it)
+    raw_body: |
+      query {\n      __schema { types { name } }\n    }
+    matchers:
+      - type: status
+        status:
+          - 413
+          - 500
+      - type: word
+        words:
+          - "Request too large"
+          - "Complexity limit exceeded"

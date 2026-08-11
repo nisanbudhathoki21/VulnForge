@@ -1,0 +1,33 @@
+id: function-level-authorization
+name: Function-Level Authorization Detection
+severity: high
+
+description: >
+  Detects endpoints that may expose privileged functionality to
+  insufficiently authorized users.
+
+requests:
+
+  - method: GET
+    path:
+      - "{{BaseURL}}/api/admin"
+      - "{{BaseURL}}/api/admin/users"
+      - "{{BaseURL}}/api/admin/settings"
+      - "{{BaseURL}}/api/internal/users"
+
+    headers:
+      Accept: application/json
+
+    matchers:
+      - type: status
+        status: 200
+
+      - type: regex
+        part: body
+        regex:
+          - '"users"\s*:'
+          - '"settings"\s*:'
+          - '"admin"\s*:'
+
+    verification:
+      - type: authorization_difference
