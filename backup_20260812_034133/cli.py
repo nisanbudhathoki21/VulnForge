@@ -48,7 +48,6 @@ import os
 import signal
 import sys
 import threading
-from pathlib import Path
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
@@ -479,8 +478,7 @@ def run_scanner(target, args):
         password=args.password,
         timeout=args.timeout,
         skip_priv=args.no_priv,
-        skip_auth=(args.no_auth or ((not args.username or not args.password) and not args.auto_auth)),
-            auto_auth=args.auto_auth,
+        skip_auth=args.no_auth,
     )
 
     if not isinstance(result, dict):

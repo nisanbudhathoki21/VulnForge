@@ -201,11 +201,10 @@ _thread_local = threading.local()
 # AUTHENTICATION - FIXED TO USE SHARED SESSION PROPERLY
 # ==============================================================
 class AuthManager:
-    def __init__(self, session, base_url, quiet=False, timeout=10):
+    def __init__(self, session, base_url, quiet=False):
         self.session = session
         self.base_url = base_url
         self.quiet = quiet
-        self.timeout = max(1, int(timeout))
         self.authenticated = False
         self.auth_data = {
             "jwt": None,
@@ -337,7 +336,6 @@ class Scanner:
         self.timeout = timeout
         self.skip_priv = skip_priv
         self.skip_auth = skip_auth
-        self.auto_auth = auto_auth
         self.random_xff = random_xff
 
         # Accounting - thread safe
@@ -353,7 +351,7 @@ class Scanner:
         # Main session for auth/bootstrap
         self.session = self._create_new_session(owner=self)
 
-        self.auth = AuthManager(self.session, self.base_url, self.quiet, self.timeout)
+        self.auth = AuthManager(self.session, self.base_url, self.quiet)
         self.username = username
         self.password = password
 
@@ -1607,7 +1605,7 @@ class Scanner:
         if not self.skip_auth:
             if not self.quiet:
                 print("[AUTH] Attempting to authenticate...")
-            authenticated=self.auth.authenticate(self.username, self.password, auto_register=self.auto_auth)
+            authenticated=self.auth.authenticate(self.username, self.password)
             if authenticated:
                 if not self.quiet:
                     print("[AUTH] Authentication successful.")
@@ -1618,11 +1616,7 @@ class Scanner:
                     print("[AUTH] Auto-authentication failed. Continuing without auth.")
         else:
             if not self.quiet:
-                if not (self.username and self.password):
-                    reason = "no credentials supplied"
-                else:
-                    reason = "--no-auth"
-                print(f"[AUTH] Skipped ({reason}).")
+                print("[AUTH] Skipped (--no-auth).")
 
         self.load_templates()
         if not self.templates:

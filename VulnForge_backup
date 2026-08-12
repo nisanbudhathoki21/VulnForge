@@ -1,0 +1,3 @@
+SELF="$(readlink -f "$0")"
+DIR="$(cd "$(dirname "$SELF")" && pwd)"
+exec python3 "$DIR/main.py" "$@"
